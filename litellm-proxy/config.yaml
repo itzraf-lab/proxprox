@@ -1,0 +1,13 @@
+model_list: []
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  callbacks: []
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/LITELLM_DATABASE_URL
+  store_model_in_db: true
+  disable_spend_logs: false
+  spend_report_frequency: "1d"

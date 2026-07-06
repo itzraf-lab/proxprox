@@ -1,0 +1,34 @@
+import jwt from "jsonwebtoken";
+import { db } from "../db/index.js";
+
+const JWT_SECRET = process.env.JWT_SECRET ?? "qillin-dev-secret-change-in-production";
+const JWT_EXPIRY = "7d";
+
+export interface JwtPayload {
+  userId: string;
+  role: string;
+  email: string;
+}
+
+export function signToken(payload: JwtPayload): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+}
+
+export function verifyToken(token: string): JwtPayload | null {
+  try {
+    return jwt.verify(token, JWT_SECRET) as JwtPayload;
+  } catch {
+    return null;
+  }
+}
+
+export function getUserFromToken(token: string) {
+  const payload = verifyToken(token);
+  if (!payload) return null;
+
+  const user = db
+    .prepare("SELECT id, email, name, role, qredits, is_active, allowed_models, litellm_user_id, created_at FROM users WHERE id = ? AND is_active = 1")
+    .get(payload.userId) as any;
+
+  return user ?? null;
+}

@@ -1,0 +1,173 @@
+import { Router } from "express";
+import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
+import { db } from "../db/index.js";
+import { requireAuth, type AuthRequest } from "../middlewares/requireAuth.js";
+import { litellmGenerateKey, litellmDeleteKey, isLiteLLMAvailable } from "../lib/litellm.js";
+
+const router = Router();
+
+router.use(requireAuth);
+
+// GET /api/user/usage
+router.get("/usage", async (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+
+  try {
+    // Get usage from activity log
+    const totalRow = db
+      .prepare("SELECT COALESCE(SUM(spend), 0) as total_spend, COUNT(*) as total_requests FROM activity_log WHERE user_id = ?")
+      .get(userId) as any;
+
+    const modelBreakdown = db
+      .prepare(`
+        SELECT 
+          model as model_id,
+          model as model_name,
+          COUNT(*) as requests,
+          COALESCE(SUM(tokens_in), 0) as tokens_in,
+          COALESCE(SUM(tokens_out), 0) as tokens_out,
+          COALESCE(SUM(spend), 0) as spend
+        FROM activity_log 
+        WHERE user_id = ? AND model IS NOT NULL
+        GROUP BY model
+        ORDER BY spend DESC
+        LIMIT 10
+      `)
+      .all(userId) as any[];
+
+    const recentRequests = db
+      .prepare(`
+        SELECT id, model, tokens_in as tokens_in, tokens_out as tokens_out, spend, timestamp
+        FROM activity_log
+        WHERE user_id = ? AND type = 'request'
+        ORDER BY timestamp DESC
+        LIMIT 20
+      `)
+      .all(userId) as any[];
+
+    res.json({
+      totalSpend: totalRow.total_spend,
+      totalRequests: Number(totalRow.total_requests),
+      modelBreakdown: modelBreakdown.map((m: any) => ({
+        modelId: m.model_id ?? "",
+        modelName: m.model_name ?? "",
+        requests: Number(m.requests),
+        tokensIn: Number(m.tokens_in),
+        tokensOut: Number(m.tokens_out),
+        spend: m.spend,
+      })),
+      recentRequests: recentRequests.map((r: any) => ({
+        id: r.id,
+        model: r.model ?? "",
+        tokensIn: Number(r.tokens_in ?? 0),
+        tokensOut: Number(r.tokens_out ?? 0),
+        spend: r.spend ?? 0,
+        timestamp: r.timestamp,
+      })),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get usage");
+    res.status(500).json({ error: "Failed to get usage" });
+  }
+});
+
+// GET /api/user/keys
+router.get("/keys", (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+
+  const keys = db
+    .prepare(`
+      SELECT id, key_hash, name, spend, last_used, created_at
+      FROM api_keys 
+      WHERE user_id = ? 
+      ORDER BY created_at DESC
+    `)
+    .all(userId) as any[];
+
+  res.json(
+    keys.map((k: any) => ({
+      keyHash: k.key_hash,
+      name: k.name,
+      token: null, // Only returned on creation
+      createdAt: k.created_at,
+      lastUsed: k.last_used ?? null,
+      spend: k.spend,
+    })),
+  );
+});
+
+// POST /api/user/keys
+router.post("/keys", async (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+  const { name, maxBudget } = req.body;
+
+  if (!name) {
+    res.status(400).json({ error: "name is required" });
+    return;
+  }
+
+  let litellmKey: string | null = null;
+  let keyHash: string;
+
+  if (isLiteLLMAvailable()) {
+    try {
+      const result = await litellmGenerateKey({
+        userId,
+        name,
+        maxBudget: maxBudget ?? null,
+      }) as any;
+      litellmKey = result.key;
+      keyHash = result.token ?? crypto.randomBytes(32).toString("hex");
+    } catch (err) {
+      req.log.warn({ err }, "LiteLLM key generation failed, creating local key");
+      litellmKey = `sk-qillin-${crypto.randomBytes(24).toString("hex")}`;
+      keyHash = crypto.createHash("sha256").update(litellmKey).digest("hex");
+    }
+  } else {
+    litellmKey = `sk-qillin-${crypto.randomBytes(24).toString("hex")}`;
+    keyHash = crypto.createHash("sha256").update(litellmKey).digest("hex");
+  }
+
+  const id = uuidv4();
+  db.prepare(`
+    INSERT INTO api_keys (id, user_id, key_hash, name, litellm_key, spend)
+    VALUES (?, ?, ?, ?, ?, 0)
+  `).run(id, userId, keyHash, name, litellmKey);
+
+  res.status(201).json({
+    keyHash,
+    name,
+    token: litellmKey, // Only returned once
+    createdAt: new Date().toISOString(),
+    lastUsed: null,
+    spend: 0,
+  });
+});
+
+// DELETE /api/user/keys/:keyHash
+router.delete("/keys/:keyHash", async (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+  const { keyHash } = req.params;
+
+  const key = db
+    .prepare("SELECT * FROM api_keys WHERE key_hash = ? AND user_id = ?")
+    .get(keyHash, userId) as any;
+
+  if (!key) {
+    res.status(404).json({ error: "Key not found" });
+    return;
+  }
+
+  if (isLiteLLMAvailable() && key.litellm_key) {
+    litellmDeleteKey(key.litellm_key).catch((err) =>
+      req.log.warn({ err }, "Failed to delete LiteLLM key"),
+    );
+  }
+
+  db.prepare("DELETE FROM api_keys WHERE key_hash = ? AND user_id = ?").run(keyHash, userId);
+
+  res.json({ message: "Key deleted" });
+});
+
+export default router;

@@ -3,20 +3,28 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Qillin AI Proxy API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: user
+    description: User operations
+  - name: models
+    description: Model catalog
+  - name: admin
+    description: Admin operations
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +32,482 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # Auth
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # User
+  /user/usage:
+    get:
+      operationId: getUserUsage
+      tags: [user]
+      summary: Get current user usage stats
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageStats"
+
+  /user/keys:
+    get:
+      operationId: getUserKeys
+      tags: [user]
+      summary: List user API keys
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiKey"
+    post:
+      operationId: createUserKey
+      tags: [user]
+      summary: Create an API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKey"
+
+  /user/keys/{keyHash}:
+    delete:
+      operationId: deleteUserKey
+      tags: [user]
+      summary: Delete an API key
+      parameters:
+        - name: keyHash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # Public model catalog
+  /models:
+    get:
+      operationId: getModels
+      tags: [models]
+      summary: List available models
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Model"
+
+  /models/{modelId}:
+    get:
+      operationId: getModel
+      tags: [models]
+      summary: Get a specific model
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Model"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # Admin
+  /admin/stats:
+    get:
+      operationId: getAdminStats
+      tags: [admin]
+      summary: Get admin dashboard stats
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStats"
+
+  /admin/activity:
+    get:
+      operationId: getAdminActivity
+      tags: [admin]
+      summary: Get recent activity feed
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityRecord"
+
+  /admin/users:
+    get:
+      operationId: getAdminUsers
+      tags: [admin]
+      summary: List all users
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminUser"
+
+  /admin/users/{userId}:
+    get:
+      operationId: getAdminUser
+      tags: [admin]
+      summary: Get a specific user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+    patch:
+      operationId: updateAdminUser
+      tags: [admin]
+      summary: Update a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+
+  /admin/users/{userId}/credits:
+    post:
+      operationId: addUserCredits
+      tags: [admin]
+      summary: Add or set user Qredits
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreditInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+
+  /admin/providers:
+    get:
+      operationId: getAdminProviders
+      tags: [admin]
+      summary: List all providers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Provider"
+    post:
+      operationId: createAdminProvider
+      tags: [admin]
+      summary: Add a provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+
+  /admin/providers/{providerId}:
+    put:
+      operationId: updateAdminProvider
+      tags: [admin]
+      summary: Update a provider
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+    delete:
+      operationId: deleteAdminProvider
+      tags: [admin]
+      summary: Delete a provider
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /admin/providers/{providerId}/fetch-models:
+    post:
+      operationId: fetchProviderModels
+      tags: [admin]
+      summary: Fetch available models from a provider using an API key
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FetchModelsInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FetchedModel"
+
+  /admin/models:
+    get:
+      operationId: getAdminModels
+      tags: [admin]
+      summary: List all models (admin view)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Model"
+    post:
+      operationId: createAdminModel
+      tags: [admin]
+      summary: Add a model to the catalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Model"
+
+  /admin/models/{modelId}:
+    put:
+      operationId: updateAdminModel
+      tags: [admin]
+      summary: Update a model
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Model"
+    delete:
+      operationId: deleteAdminModel
+      tags: [admin]
+      summary: Delete a model
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +515,411 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required: [message]
+
+    # Auth
+    RegisterInput:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        name:
+          type: string
+      required: [email, password, name]
+
+    LoginInput:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required: [email, password]
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+      required: [token, user]
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+        qredits:
+          type: number
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, email, name, role, qredits, isActive, createdAt]
+
+    # User features
+    UsageStats:
+      type: object
+      properties:
+        totalSpend:
+          type: number
+        totalRequests:
+          type: integer
+        modelBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelUsage"
+        recentRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestRecord"
+      required: [totalSpend, totalRequests, modelBreakdown, recentRequests]
+
+    ModelUsage:
+      type: object
+      properties:
+        modelId:
+          type: string
+        modelName:
+          type: string
+        requests:
+          type: integer
+        tokensIn:
+          type: integer
+        tokensOut:
+          type: integer
+        spend:
+          type: number
+      required: [modelId, modelName, requests, tokensIn, tokensOut, spend]
+
+    RequestRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        model:
+          type: string
+        tokensIn:
+          type: integer
+        tokensOut:
+          type: integer
+        spend:
+          type: number
+        timestamp:
+          type: string
+      required: [id, model, tokensIn, tokensOut, spend, timestamp]
+
+    ApiKey:
+      type: object
+      properties:
+        keyHash:
+          type: string
+        name:
+          type: string
+        token:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        lastUsed:
+          type: ["string", "null"]
+        spend:
+          type: number
+      required: [keyHash, name, token, createdAt, lastUsed, spend]
+
+    ApiKeyInput:
+      type: object
+      properties:
+        name:
+          type: string
+        maxBudget:
+          type: ["number", "null"]
+      required: [name]
+
+    # Model catalog
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        litellmModel:
+          type: string
+        provider:
+          type: string
+        providerId:
+          type: string
+        contextWindow:
+          type: integer
+        inputCostPerMtok:
+          type: number
+        outputCostPerMtok:
+          type: number
+        enabled:
+          type: boolean
+      required: [id, name, litellmModel, provider, providerId, contextWindow, inputCostPerMtok, outputCostPerMtok, enabled]
+
+    ModelInput:
+      type: object
+      properties:
+        name:
+          type: string
+        litellmModel:
+          type: string
+        providerId:
+          type: string
+        contextWindow:
+          type: integer
+        inputCostPerMtok:
+          type: number
+        outputCostPerMtok:
+          type: number
+        enabled:
+          type: boolean
+      required: [name, litellmModel, providerId, contextWindow, inputCostPerMtok, outputCostPerMtok]
+
+    # Admin
+    AdminStats:
+      type: object
+      properties:
+        totalUsers:
+          type: integer
+        totalSpend:
+          type: number
+        totalRequests:
+          type: integer
+        activeModels:
+          type: integer
+        activeProviders:
+          type: integer
+        spendByDay:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailySpend"
+        topUsers:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserSpendSummary"
+      required: [totalUsers, totalSpend, totalRequests, activeModels, activeProviders, spendByDay, topUsers]
+
+    DailySpend:
+      type: object
+      properties:
+        date:
+          type: string
+        spend:
+          type: number
+        requests:
+          type: integer
+      required: [date, spend, requests]
+
+    UserSpendSummary:
+      type: object
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        spend:
+          type: number
+        requests:
+          type: integer
+      required: [userId, email, name, spend, requests]
+
+    ActivityRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        userId:
+          type: ["string", "null"]
+        userEmail:
+          type: ["string", "null"]
+        model:
+          type: ["string", "null"]
+        tokensIn:
+          type: ["integer", "null"]
+        tokensOut:
+          type: ["integer", "null"]
+        spend:
+          type: ["number", "null"]
+        timestamp:
+          type: string
+      required: [id, type, timestamp]
+
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+        qredits:
+          type: number
+        totalSpend:
+          type: number
+        totalRequests:
+          type: integer
+        allowedModels:
+          type: ["array", "null"]
+          items:
+            type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+        litellmUserId:
+          type: ["string", "null"]
+      required: [id, email, name, role, qredits, totalSpend, totalRequests, isActive, createdAt]
+
+    UserUpdate:
+      type: object
+      properties:
+        qredits:
+          type: ["number", "null"]
+        isActive:
+          type: ["boolean", "null"]
+        allowedModels:
+          type: ["array", "null"]
+          items:
+            type: string
+        role:
+          type: ["string", "null"]
+
+    CreditInput:
+      type: object
+      properties:
+        amount:
+          type: number
+        operation:
+          type: string
+          enum: [add, set, subtract]
+      required: [amount, operation]
+
+    Provider:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [openai, anthropic, custom]
+        baseUrl:
+          type: ["string", "null"]
+        loadBalancing:
+          type: string
+          enum: [round_robin, priority]
+        apiKeys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderApiKey"
+        modelCount:
+          type: integer
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, name, type, loadBalancing, apiKeys, modelCount, isActive, createdAt]
+
+    ProviderApiKey:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: ["string", "null"]
+        keyMasked:
+          type: string
+        priority:
+          type: integer
+        failCount:
+          type: integer
+      required: [id, keyMasked, priority, failCount]
+
+    ProviderApiKeyInput:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          type: ["string", "null"]
+        priority:
+          type: integer
+      required: [key, priority]
+
+    ProviderInput:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [openai, anthropic, custom]
+        baseUrl:
+          type: ["string", "null"]
+        loadBalancing:
+          type: string
+          enum: [round_robin, priority]
+        apiKeys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderApiKeyInput"
+      required: [name, type, loadBalancing, apiKeys]
+
+    FetchModelsInput:
+      type: object
+      properties:
+        apiKey:
+          type: string
+        baseUrl:
+          type: ["string", "null"]
+      required: [apiKey]
+
+    FetchedModel:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        contextWindow:
+          type: ["integer", "null"]
+      required: [id, name]
