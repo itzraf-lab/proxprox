@@ -3,6 +3,7 @@ import cors from "cors";
 import compression from "compression";
 import pinoHttp from "pino-http";
 import router from "./routes/index.js";
+import v1Router from "./routes/v1.js";
 import { litellmProxy } from "./routes/proxy.js";
 import { logger } from "./lib/logger.js";
 
@@ -43,8 +44,14 @@ app.use(
   }),
 );
 
+// ── Native /v1 handlers (before the proxy) ───────────────────────────────────
+// These intercept specific /v1/* paths (e.g. GET /v1/models) with Qillin's own
+// auth and DB-sourced data. express.json() is applied here so these handlers
+// can parse bodies; the proxy below must remain before the global body-parser.
+app.use("/v1", express.json({ limit: "1mb" }), v1Router);
+
 // ── Streaming AI proxy (/v1/*) ────────────────────────────────────────────────
-// Mount BEFORE body-parsing middleware so the raw request stream is piped
+// Mounted BEFORE the global body-parser so the raw request stream is piped
 // directly to LiteLLM — no buffering, full SSE streaming support.
 // The proxy internally allowlists only OpenAI-compatible endpoints.
 app.use("/v1", litellmProxy);
