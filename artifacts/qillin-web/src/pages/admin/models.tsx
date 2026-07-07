@@ -11,11 +11,13 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { BrainCircuit, Plus, Edit2, Trash2, Server } from "lucide-react"
+import { BrainCircuit, Plus, Edit2, Trash2, Server, Sparkles } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { Model, ModelInput } from "@workspace/api-client-react"
+import { ModelCombobox } from "@/components/model-combobox"
+import { fmtCtx, type KnownModel } from "@/lib/known-models"
 
 export default function AdminModels() {
   return (
@@ -103,7 +105,7 @@ function AdminModelsContent() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {model.contextWindow >= 1000 ? `${model.contextWindow / 1000}K` : model.contextWindow}
+                      {model.contextWindow ? fmtCtx(model.contextWindow) : "—"}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="font-mono font-bold text-sm">{formatCurrency(model.inputCostPerMtok)}</div>
@@ -167,10 +169,24 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
   const [name, setName] = React.useState(initialData?.name || "")
   const [litellmModel, setLitellmModel] = React.useState(initialData?.litellmModel || "")
   const [providerId, setProviderId] = React.useState(initialData?.providerId || "")
-  const [contextWindow, setContextWindow] = React.useState(initialData?.contextWindow?.toString() || "128000")
-  const [inputCost, setInputCost] = React.useState(initialData?.inputCostPerMtok?.toString() || "0.0000")
-  const [outputCost, setOutputCost] = React.useState(initialData?.outputCostPerMtok?.toString() || "0.0000")
+  const [contextWindow, setContextWindow] = React.useState(initialData?.contextWindow?.toString() || "")
+  const [inputCost, setInputCost] = React.useState(initialData?.inputCostPerMtok?.toString() || "")
+  const [outputCost, setOutputCost] = React.useState(initialData?.outputCostPerMtok?.toString() || "")
   const [enabled, setEnabled] = React.useState(initialData?.enabled ?? true)
+  const [autoFilled, setAutoFilled] = React.useState(false)
+
+  const handleModelSelect = (modelId: string, meta: KnownModel | null) => {
+    setLitellmModel(modelId)
+    if (meta) {
+      if (!name) setName(meta.displayName)
+      setContextWindow(meta.contextWindow.toString())
+      setInputCost(meta.inputCostPerMtok.toString())
+      setOutputCost(meta.outputCostPerMtok.toString())
+      setAutoFilled(true)
+    } else {
+      setAutoFilled(false)
+    }
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -180,9 +196,9 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
       name,
       litellmModel,
       providerId,
-      contextWindow: parseInt(contextWindow, 10),
-      inputCostPerMtok: parseFloat(inputCost),
-      outputCostPerMtok: parseFloat(outputCost),
+      contextWindow: parseInt(contextWindow, 10) || 4096,
+      inputCostPerMtok: parseFloat(inputCost) || 0,
+      outputCostPerMtok: parseFloat(outputCost) || 0,
       enabled
     }
 
@@ -219,13 +235,29 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
       <div className="grid grid-cols-2 gap-6">
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label className="font-mono text-xs uppercase tracking-wider">Display Name</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} required className="rounded-none bg-sidebar/10 font-mono" placeholder="e.g. GPT-4o" />
+            <Label className="font-mono text-xs uppercase tracking-wider flex items-center gap-2">
+              LiteLLM Target
+            </Label>
+            <ModelCombobox
+              value={litellmModel}
+              onChange={handleModelSelect}
+            />
           </div>
+
           <div className="space-y-2">
-            <Label className="font-mono text-xs uppercase tracking-wider">LiteLLM Target</Label>
-            <Input value={litellmModel} onChange={e => setLitellmModel(e.target.value)} required className="rounded-none bg-sidebar/10 font-mono" placeholder="e.g. openai/gpt-4o" />
+            <Label className="font-mono text-xs uppercase tracking-wider">
+              Display Name
+              {autoFilled && <span className="ml-2 text-emerald-600 dark:text-emerald-400 normal-case">auto-filled</span>}
+            </Label>
+            <Input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+              className="rounded-none bg-sidebar/10 font-mono"
+              placeholder="e.g. GPT-4o"
+            />
           </div>
+
           <div className="space-y-2">
             <Label className="font-mono text-xs uppercase tracking-wider">Upstream Provider</Label>
             <Select value={providerId} onValueChange={setProviderId} required>
@@ -243,19 +275,59 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label className="font-mono text-xs uppercase tracking-wider">Context Window (Tokens)</Label>
-            <Input type="number" value={contextWindow} onChange={e => setContextWindow(e.target.value)} required className="rounded-none bg-sidebar/10 font-mono" />
+            <Label className="font-mono text-xs uppercase tracking-wider flex items-center gap-1.5">
+              Context Window (tokens)
+              {autoFilled && contextWindow && (
+                <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 normal-case">
+                  <Sparkles className="h-3 w-3" /> {fmtCtx(parseInt(contextWindow))}
+                </span>
+              )}
+            </Label>
+            <Input
+              type="number"
+              value={contextWindow}
+              onChange={e => setContextWindow(e.target.value)}
+              required
+              className="rounded-none bg-sidebar/10 font-mono"
+              placeholder="e.g. 128000"
+            />
           </div>
+
           <div className="space-y-2">
             <Label className="font-mono text-xs uppercase tracking-wider text-primary">Input Cost (Qr / MTok)</Label>
-            <Input type="number" step="0.0001" min="0" value={inputCost} onChange={e => setInputCost(e.target.value)} required className="rounded-none bg-sidebar/10 font-mono" />
+            <Input
+              type="number"
+              step="any"
+              min="0"
+              value={inputCost}
+              onChange={e => setInputCost(e.target.value)}
+              required
+              className="rounded-none bg-sidebar/10 font-mono"
+              placeholder="e.g. 2.50"
+            />
           </div>
+
           <div className="space-y-2">
             <Label className="font-mono text-xs uppercase tracking-wider text-primary">Output Cost (Qr / MTok)</Label>
-            <Input type="number" step="0.0001" min="0" value={outputCost} onChange={e => setOutputCost(e.target.value)} required className="rounded-none bg-sidebar/10 font-mono" />
+            <Input
+              type="number"
+              step="any"
+              min="0"
+              value={outputCost}
+              onChange={e => setOutputCost(e.target.value)}
+              required
+              className="rounded-none bg-sidebar/10 font-mono"
+              placeholder="e.g. 10.00"
+            />
           </div>
+
           <div className="flex items-center gap-3 pt-2">
-            <Checkbox checked={enabled} onCheckedChange={c => setEnabled(c === true)} id="enabled" className="border-2 rounded-none h-5 w-5" />
+            <Checkbox
+              checked={enabled}
+              onCheckedChange={c => setEnabled(c === true)}
+              id="enabled"
+              className="border-2 rounded-none h-5 w-5"
+            />
             <Label htmlFor="enabled" className="font-mono text-sm uppercase tracking-wider cursor-pointer">Route Active</Label>
           </div>
         </div>
@@ -263,7 +335,11 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
 
       <DialogFooter className="border-t pt-4">
         <Button type="button" variant="outline" onClick={onClose} className="rounded-none font-mono uppercase">Cancel</Button>
-        <Button type="submit" className="rounded-none font-mono uppercase" disabled={createModel.isPending || updateModel.isPending}>
+        <Button
+          type="submit"
+          className="rounded-none font-mono uppercase"
+          disabled={createModel.isPending || updateModel.isPending}
+        >
           Commit Configuration
         </Button>
       </DialogFooter>

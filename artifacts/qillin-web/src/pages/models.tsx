@@ -4,7 +4,8 @@ import { useGetModels } from "@workspace/api-client-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { formatCurrency } from "@/lib/utils"
-import { Search, Server, Zap, BrainCircuit, CheckCircle2, XCircle } from "lucide-react"
+import { fmtCtx } from "@/lib/known-models"
+import { Search, Server, Zap, BrainCircuit } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
 
@@ -78,7 +79,7 @@ export default function Models() {
                         <div className="p-3 flex flex-col gap-1">
                           <span className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">Context</span>
                           <span className="font-mono text-sm font-semibold truncate flex items-center gap-1.5">
-                            <Zap className="w-3.5 h-3.5 text-amber-500" /> {model.contextWindow >= 1000 ? `${model.contextWindow / 1000}K` : model.contextWindow}
+                            <Zap className="w-3.5 h-3.5 text-amber-500" /> {model.contextWindow ? fmtCtx(model.contextWindow) : "—"}
                           </span>
                         </div>
                       </div>
