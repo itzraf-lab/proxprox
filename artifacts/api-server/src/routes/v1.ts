@@ -59,7 +59,7 @@ router.get("/models", (req: AuthRequest, res) => {
   }
 
   const data = models.map((m) => ({
-    id: m.litellm_model,
+    id: m.name,
     object: "model",
     created: m.created_at
       ? Math.floor(new Date(m.created_at).getTime() / 1000)
