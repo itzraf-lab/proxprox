@@ -19,7 +19,7 @@ import type { Options } from "http-proxy-middleware";
 import type { Request, Response } from "express";
 import type { IncomingMessage } from "http";
 
-const LITELLM_URL = process.env.LITELLM_URL ?? "http://localhost:8000";
+const LITELLM_URL = process.env.LITELLM_URL ?? "http://127.0.0.1:8000";
 
 /** OpenAI-compatible endpoints users are allowed to call */
 const ALLOWED_PATHS = new Set([

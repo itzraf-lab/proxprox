@@ -3,7 +3,7 @@
  * Calls the internal LiteLLM proxy server at LITELLM_URL.
  */
 
-const LITELLM_URL = process.env.LITELLM_URL ?? "http://localhost:8000";
+const LITELLM_URL = process.env.LITELLM_URL ?? "http://127.0.0.1:8000";
 const LITELLM_MASTER_KEY = process.env.LITELLM_MASTER_KEY ?? "";
 
 function litellmHeaders() {

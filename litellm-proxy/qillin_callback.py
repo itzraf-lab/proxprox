@@ -15,7 +15,7 @@ import asyncio
 import threading
 from litellm.integrations.custom_logger import CustomLogger
 
-QILLIN_INTERNAL_URL = os.environ.get("QILLIN_INTERNAL_URL", "http://localhost:3001")
+QILLIN_INTERNAL_URL = os.environ.get("QILLIN_INTERNAL_URL", "http://localhost:8080")
 LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 
 
@@ -48,14 +48,35 @@ class QillinLogger(CustomLogger):
 
     def _fire(self, kwargs: dict, response_obj, start_time, end_time) -> None:
         try:
-            # User ID injected by the Qillin proxy as x-user-id header,
-            # which LiteLLM surfaces as kwargs["user"].
+            print(f"[QillinLogger] _fire called, model={kwargs.get('model')}")
+            # User ID lookup order:
+            # 1. "user" field in the OpenAI request body (set by LiteLLM from virtual-key user association)
+            # 2. litellm_params["user"] (same, different nesting)
+            # 3. metadata["user_id"] (explicit metadata injection)
+            # 4. metadata["headers"]["x-user-id"] — the header Qillin's proxy middleware sets
+            #    LiteLLM stores all request headers in kwargs["metadata"]["headers"]
+            # 5. user_api_key_user_id from LiteLLM key auth
+            metadata = kwargs.get("metadata") or {}
+            headers = metadata.get("headers") or {}
             user_id = (
                 kwargs.get("user")
                 or kwargs.get("litellm_params", {}).get("user")
-                or kwargs.get("metadata", {}).get("user_id")
+                or metadata.get("user_id")
+                or headers.get("x-user-id")
+                or metadata.get("user_api_key_user_id")
             )
             if not user_id:
+                lp = kwargs.get("litellm_params") or {}
+                lp_meta = lp.get("metadata") or {}
+                lp_headers = lp_meta.get("headers") or {}
+                slo = kwargs.get("standard_logging_object") or {}
+                # Log only header keys (never values) to avoid leaking auth tokens.
+                print(
+                    f"[QillinLogger] No user_id found — skipping event. "
+                    f"header_keys={sorted(lp_headers.keys())!r} "
+                    f"lp_meta.user_api_key_user_id={'present' if lp_meta.get('user_api_key_user_id') else 'absent'} "
+                    f"slo.user_api_key_user_id={'present' if slo.get('user_api_key_user_id') else 'absent'}"
+                )
                 return  # anonymous or non-tracked request
 
             model = kwargs.get("model", "unknown")
@@ -97,3 +118,14 @@ class QillinLogger(CustomLogger):
 
 # LiteLLM loads this instance via the module path "qillin_callback.qillin_logger"
 qillin_logger = QillinLogger()
+
+# LiteLLM proxy uses async completions, so callbacks must be in
+# litellm._async_success_callback — the sync success_callback list is never
+# invoked for proxy requests.  We self-register here to guarantee placement.
+try:
+    import litellm as _litellm
+    if qillin_logger not in _litellm._async_success_callback:
+        _litellm._async_success_callback.append(qillin_logger)
+    print("[QillinLogger] Registered in litellm._async_success_callback")
+except Exception as _e:
+    print(f"[QillinLogger] Could not self-register in async callback list: {_e}")

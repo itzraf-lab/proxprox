@@ -15,6 +15,11 @@ if "LITELLM_MASTER_KEY" not in os.environ:
 
 port = os.environ.get("LITELLM_PORT", "8000")
 config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
+
+# Ensure the callback knows where to reach the Qillin API server.
+# The API server artifact is pinned to port 8080 in its artifact.toml.
+if "QILLIN_INTERNAL_URL" not in os.environ:
+    os.environ["QILLIN_INTERNAL_URL"] = "http://localhost:8080"
 pythonlibs = "/home/runner/workspace/.pythonlibs"
 
 
@@ -36,5 +41,8 @@ else:
 # Find and launch litellm
 litellm_bin = shutil.which("litellm") or f"{pythonlibs}/bin/litellm"
 print(f"Using litellm: {litellm_bin}")
-result = subprocess.run([litellm_bin, "--port", port, "--config", config_path], check=False)
+result = subprocess.run(
+    [litellm_bin, "--port", port, "--host", "127.0.0.1", "--config", config_path],
+    check=False,
+)
 sys.exit(result.returncode)
