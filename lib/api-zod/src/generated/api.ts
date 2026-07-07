@@ -107,6 +107,7 @@ export const GetUserUsageResponse = zod.object({
   "tokensIn": zod.number(),
   "tokensOut": zod.number(),
   "spend": zod.number(),
+  "latencyMs": zod.number().nullish(),
   "timestamp": zod.string()
 }))
 })
@@ -540,6 +541,79 @@ export const DeleteAdminModelParams = zod.object({
 
 export const DeleteAdminModelResponse = zod.object({
   "message": zod.string()
+})
+
+
+/**
+ * @summary Get paginated request history (all users)
+ */
+export const getAdminRequestsQueryPageDefault = 1;
+export const getAdminRequestsQueryLimitDefault = 50;
+
+export const GetAdminRequestsQueryParams = zod.object({
+  "page": zod.coerce.number().default(getAdminRequestsQueryPageDefault),
+  "limit": zod.coerce.number().default(getAdminRequestsQueryLimitDefault),
+  "userId": zod.coerce.string().optional(),
+  "model": zod.coerce.string().optional()
+})
+
+export const GetAdminRequestsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "userId": zod.string().nullish(),
+  "userEmail": zod.string().nullish(),
+  "model": zod.string(),
+  "tokensIn": zod.number(),
+  "tokensOut": zod.number(),
+  "spend": zod.number(),
+  "latencyMs": zod.number().nullish(),
+  "timestamp": zod.string()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "totalPages": zod.number()
+})
+
+
+/**
+ * @summary Get system-wide model utilization breakdown
+ */
+export const GetAdminModelUtilizationResponseItem = zod.object({
+  "modelId": zod.string(),
+  "modelName": zod.string(),
+  "requests": zod.number(),
+  "tokensIn": zod.number(),
+  "tokensOut": zod.number(),
+  "spend": zod.number()
+})
+export const GetAdminModelUtilizationResponse = zod.array(GetAdminModelUtilizationResponseItem)
+
+
+/**
+ * @summary Get paginated request history for the current user
+ */
+export const getUserRequestsQueryPageDefault = 1;
+export const getUserRequestsQueryLimitDefault = 20;
+
+export const GetUserRequestsQueryParams = zod.object({
+  "page": zod.coerce.number().default(getUserRequestsQueryPageDefault),
+  "limit": zod.coerce.number().default(getUserRequestsQueryLimitDefault),
+  "model": zod.coerce.string().optional()
+})
+
+export const GetUserRequestsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "model": zod.string(),
+  "tokensIn": zod.number(),
+  "tokensOut": zod.number(),
+  "spend": zod.number(),
+  "latencyMs": zod.number().nullish(),
+  "timestamp": zod.string()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "totalPages": zod.number()
 })
 
 

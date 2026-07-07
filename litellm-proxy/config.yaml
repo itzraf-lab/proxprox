@@ -3,7 +3,10 @@ model_list: []
 litellm_settings:
   drop_params: true
   set_verbose: false
-  callbacks: []
+  # qillin_logger is a CustomLogger defined in qillin_callback.py (repo root).
+  # It POSTs usage/cost data to the Qillin API server after every successful
+  # LLM call so Qredits can be deducted and activity_log populated in real-time.
+  success_callback: ["qillin_callback.qillin_logger"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

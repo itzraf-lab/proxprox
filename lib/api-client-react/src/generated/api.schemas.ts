@@ -67,6 +67,8 @@ export interface RequestRecord {
   tokensIn: number;
   tokensOut: number;
   spend: number;
+  /** @nullable */
+  latencyMs?: number | null;
   timestamp: string;
 }
 
@@ -291,4 +293,46 @@ export interface FetchedModel {
   /** @nullable */
   contextWindow?: number | null;
 }
+
+export interface RequestsPage {
+  items: RequestRecord[];
+  total: number;
+  page: number;
+  totalPages: number;
+}
+
+export interface AdminRequestRecord {
+  id: string;
+  /** @nullable */
+  userId?: string | null;
+  /** @nullable */
+  userEmail?: string | null;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  spend: number;
+  /** @nullable */
+  latencyMs?: number | null;
+  timestamp: string;
+}
+
+export interface AdminRequestsPage {
+  items: AdminRequestRecord[];
+  total: number;
+  page: number;
+  totalPages: number;
+}
+
+export type GetAdminRequestsParams = {
+page?: number;
+limit?: number;
+userId?: string;
+model?: string;
+};
+
+export type GetUserRequestsParams = {
+page?: number;
+limit?: number;
+model?: string;
+};
 

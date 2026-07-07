@@ -21,6 +21,7 @@ import type {
 
 import type {
   ActivityRecord,
+  AdminRequestsPage,
   AdminStats,
   AdminUser,
   ApiKey,
@@ -30,14 +31,18 @@ import type {
   ErrorResponse,
   FetchModelsInput,
   FetchedModel,
+  GetAdminRequestsParams,
+  GetUserRequestsParams,
   HealthStatus,
   LoginInput,
   MessageResponse,
   Model,
   ModelInput,
+  ModelUsage,
   Provider,
   ProviderInput,
   RegisterInput,
+  RequestsPage,
   UsageStats,
   User,
   UserUpdate
@@ -1978,4 +1983,249 @@ export const useDeleteAdminModel = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getDeleteAdminModelMutationOptions(options));
     }
+
+export const getGetAdminRequestsUrl = (params?: GetAdminRequestsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/requests?${stringifiedParams}` : `/api/admin/requests`
+}
+
+/**
+ * @summary Get paginated request history (all users)
+ */
+export const getAdminRequests = async (params?: GetAdminRequestsParams, options?: RequestInit): Promise<AdminRequestsPage> => {
+
+  return customFetch<AdminRequestsPage>(getGetAdminRequestsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminRequestsQueryKey = (params?: GetAdminRequestsParams,) => {
+    return [
+    `/api/admin/requests`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAdminRequestsQueryOptions = <TData = Awaited<ReturnType<typeof getAdminRequests>>, TError = ErrorType<unknown>>(params?: GetAdminRequestsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminRequestsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminRequests>>> = ({ signal }) => getAdminRequests(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminRequests>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminRequests>>>
+export type GetAdminRequestsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get paginated request history (all users)
+ */
+
+export function useGetAdminRequests<TData = Awaited<ReturnType<typeof getAdminRequests>>, TError = ErrorType<unknown>>(
+ params?: GetAdminRequestsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminRequestsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminModelUtilizationUrl = () => {
+
+
+
+
+  return `/api/admin/model-utilization`
+}
+
+/**
+ * @summary Get system-wide model utilization breakdown
+ */
+export const getAdminModelUtilization = async ( options?: RequestInit): Promise<ModelUsage[]> => {
+
+  return customFetch<ModelUsage[]>(getGetAdminModelUtilizationUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminModelUtilizationQueryKey = () => {
+    return [
+    `/api/admin/model-utilization`
+    ] as const;
+    }
+
+
+export const getGetAdminModelUtilizationQueryOptions = <TData = Awaited<ReturnType<typeof getAdminModelUtilization>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminModelUtilization>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminModelUtilizationQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminModelUtilization>>> = ({ signal }) => getAdminModelUtilization({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminModelUtilization>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminModelUtilizationQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminModelUtilization>>>
+export type GetAdminModelUtilizationQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get system-wide model utilization breakdown
+ */
+
+export function useGetAdminModelUtilization<TData = Awaited<ReturnType<typeof getAdminModelUtilization>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminModelUtilization>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminModelUtilizationQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetUserRequestsUrl = (params?: GetUserRequestsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/user/requests?${stringifiedParams}` : `/api/user/requests`
+}
+
+/**
+ * @summary Get paginated request history for the current user
+ */
+export const getUserRequests = async (params?: GetUserRequestsParams, options?: RequestInit): Promise<RequestsPage> => {
+
+  return customFetch<RequestsPage>(getGetUserRequestsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUserRequestsQueryKey = (params?: GetUserRequestsParams,) => {
+    return [
+    `/api/user/requests`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetUserRequestsQueryOptions = <TData = Awaited<ReturnType<typeof getUserRequests>>, TError = ErrorType<unknown>>(params?: GetUserRequestsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUserRequestsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUserRequests>>> = ({ signal }) => getUserRequests(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUserRequests>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUserRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof getUserRequests>>>
+export type GetUserRequestsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get paginated request history for the current user
+ */
+
+export function useGetUserRequests<TData = Awaited<ReturnType<typeof getUserRequests>>, TError = ErrorType<unknown>>(
+ params?: GetUserRequestsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUserRequestsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 

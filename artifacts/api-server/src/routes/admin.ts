@@ -174,6 +174,82 @@ router.get("/activity", (_req, res) => {
   );
 });
 
+// GET /api/admin/requests — paginated request history (all users)
+router.get("/requests", (req: AuthRequest, res) => {
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
+  const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit ?? "50"), 10)));
+  const offset = (page - 1) * limit;
+  const userId = req.query.userId ? String(req.query.userId) : null;
+  const model = req.query.model ? String(req.query.model) : null;
+
+  const conditions: string[] = ["type = 'request'"];
+  const params: any[] = [];
+  if (userId) { conditions.push("user_id = ?"); params.push(userId); }
+  if (model) { conditions.push("model = ?"); params.push(model); }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  try {
+    const total = (
+      db.prepare(`SELECT COUNT(*) as c FROM activity_log ${where}`)
+        .get(...params) as any
+    ).c;
+
+    const rows = db.prepare(`
+      SELECT id, user_id, user_email, model, tokens_in, tokens_out, spend, latency_ms, timestamp
+      FROM activity_log ${where}
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset) as any[];
+
+    res.json({
+      items: rows.map((r: any) => ({
+        id: r.id,
+        userId: r.user_id ?? null,
+        userEmail: r.user_email ?? null,
+        model: r.model ?? "",
+        tokensIn: Number(r.tokens_in ?? 0),
+        tokensOut: Number(r.tokens_out ?? 0),
+        spend: r.spend ?? 0,
+        latencyMs: r.latency_ms ?? null,
+        timestamp: r.timestamp,
+      })),
+      total: Number(total),
+      page,
+      totalPages: Math.max(1, Math.ceil(Number(total) / limit)),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get admin requests");
+    res.status(500).json({ error: "Failed to get requests" });
+  }
+});
+
+// GET /api/admin/model-utilization — system-wide model breakdown
+router.get("/model-utilization", (_req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      model as model_id,
+      model as model_name,
+      COUNT(*) as requests,
+      COALESCE(SUM(tokens_in), 0) as tokens_in,
+      COALESCE(SUM(tokens_out), 0) as tokens_out,
+      COALESCE(SUM(spend), 0) as spend
+    FROM activity_log
+    WHERE type = 'request' AND model IS NOT NULL
+    GROUP BY model
+    ORDER BY spend DESC
+  `).all() as any[];
+
+  res.json(rows.map((r: any) => ({
+    modelId: r.model_id ?? "",
+    modelName: r.model_name ?? "",
+    requests: Number(r.requests),
+    tokensIn: Number(r.tokens_in),
+    tokensOut: Number(r.tokens_out),
+    spend: r.spend,
+  })));
+});
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 router.get("/users", (_req, res) => {

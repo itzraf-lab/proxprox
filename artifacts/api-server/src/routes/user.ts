@@ -145,6 +145,52 @@ router.post("/keys", async (req: AuthRequest, res) => {
   });
 });
 
+// GET /api/user/requests — paginated request history
+router.get("/requests", (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
+  const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"), 10)));
+  const offset = (page - 1) * limit;
+  const model = req.query.model ? String(req.query.model) : null;
+
+  const whereModel = model ? " AND model = ?" : "";
+  const baseParams: any[] = [userId];
+  if (model) baseParams.push(model);
+
+  try {
+    const total = (
+      db.prepare(`SELECT COUNT(*) as c FROM activity_log WHERE user_id = ? AND type = 'request'${whereModel}`)
+        .get(...baseParams) as any
+    ).c;
+
+    const rows = db.prepare(`
+      SELECT id, model, tokens_in, tokens_out, spend, latency_ms, timestamp
+      FROM activity_log
+      WHERE user_id = ? AND type = 'request'${whereModel}
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `).all(...baseParams, limit, offset) as any[];
+
+    res.json({
+      items: rows.map((r: any) => ({
+        id: r.id,
+        model: r.model ?? "",
+        tokensIn: Number(r.tokens_in ?? 0),
+        tokensOut: Number(r.tokens_out ?? 0),
+        spend: r.spend ?? 0,
+        latencyMs: r.latency_ms ?? null,
+        timestamp: r.timestamp,
+      })),
+      total: Number(total),
+      page,
+      totalPages: Math.max(1, Math.ceil(Number(total) / limit)),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get user requests");
+    res.status(500).json({ error: "Failed to get requests" });
+  }
+});
+
 // DELETE /api/user/keys/:keyHash
 router.delete("/keys/:keyHash", async (req: AuthRequest, res) => {
   const userId = req.user!.id;

@@ -1,9 +1,10 @@
 import * as React from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
-import { useGetAdminStats } from "@workspace/api-client-react"
+import { useGetAdminStats, useGetAdminModelUtilization } from "@workspace/api-client-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { formatCurrency, formatNumber } from "@/lib/utils"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { formatCurrency, formatNumber, formatTokens } from "@/lib/utils"
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts"
 import { Users, Server, Box, Activity, DollarSign } from "lucide-react"
 
@@ -19,6 +20,7 @@ export default function AdminDashboard() {
 
 function AdminDashboardContent() {
   const { data: stats } = useGetAdminStats()
+  const { data: modelUsage } = useGetAdminModelUtilization()
 
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-sidebar/10">
@@ -129,6 +131,45 @@ function AdminDashboardContent() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Model Utilization Table */}
+      <Card className="rounded-none border-2 shadow-lg mt-6">
+        <CardHeader className="border-b bg-background pb-4 px-4">
+          <CardTitle className="font-mono uppercase tracking-wider text-sm md:text-base">Target Telemetry</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0 bg-background overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent bg-sidebar/30">
+                <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold">Target Alias</TableHead>
+                <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Interceptions</TableHead>
+                <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Tk In</TableHead>
+                <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Tk Out</TableHead>
+                <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Burn (Qr)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {modelUsage && modelUsage.length > 0 ? (
+                modelUsage.map((model) => (
+                  <TableRow key={model.modelId} className="hover:bg-sidebar/20 transition-colors">
+                    <TableCell className="font-mono text-[12px] font-bold text-primary whitespace-nowrap">{model.modelName}</TableCell>
+                    <TableCell className="font-mono text-[12px] text-right">{formatNumber(model.requests)}</TableCell>
+                    <TableCell className="font-mono text-[12px] text-right text-muted-foreground">{formatTokens(model.tokensIn)}</TableCell>
+                    <TableCell className="font-mono text-[12px] text-right text-muted-foreground">{formatTokens(model.tokensOut)}</TableCell>
+                    <TableCell className="font-mono text-[12px] text-right font-bold">{formatCurrency(model.spend)}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center font-mono text-sm text-muted-foreground py-8 border-dashed">
+                    NO TARGET TELEMETRY AVAILABLE
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   )
 }

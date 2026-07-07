@@ -1,3 +1,4 @@
+- [LiteLLM callback file location](litellm-callback-location.md) — callback .py files must be in litellm-proxy/ (same dir as config.yaml); PYTHONPATH is irrelevant, get_instance_fn uses direct file path.
 - [LiteLLM SQLite limitation](litellm-sqlite.md) — LiteLLM requires PostgreSQL for virtual keys/spend tracking; SQLite is not supported by LiteLLM itself.
 - [LiteLLM openai/ prefix required](litellm-openai-prefix.md) — custom OpenAI-compatible models must use "openai/<model>" in litellm_params.model or LiteLLM silently ignores them (200 OK but not persisted/routed).
 - [LiteLLM model sync on startup](litellm-model-sync.md) — API server syncs all enabled Qillin DB models to LiteLLM on boot via sync.ts; models added while LiteLLM is down are re-registered next startup.

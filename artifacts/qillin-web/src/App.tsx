@@ -11,6 +11,8 @@ import AdminDashboard from '@/pages/admin/dashboard';
 import AdminUsers from '@/pages/admin/users';
 import AdminProviders from '@/pages/admin/providers';
 import AdminModels from '@/pages/admin/models';
+import Requests from '@/pages/requests';
+import AdminRequests from '@/pages/admin/requests';
 
 const queryClient = new QueryClient();
 
@@ -33,11 +35,13 @@ function Router() {
       <Route path="/register" component={Register} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/models" component={Models} />
+      <Route path="/requests" component={Requests} />
       
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/admin/providers" component={AdminProviders} />
       <Route path="/admin/models" component={AdminModels} />
+      <Route path="/admin/requests" component={AdminRequests} />
       
       <Route component={NotFound} />
     </Switch>

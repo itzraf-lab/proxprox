@@ -6,8 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface RequestRecord {
+export interface AdminRequestRecord {
   id: string;
+  /** @nullable */
+  userId?: string | null;
+  /** @nullable */
+  userEmail?: string | null;
   model: string;
   tokensIn: number;
   tokensOut: number;

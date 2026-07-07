@@ -94,9 +94,19 @@ db.exec(`
     tokens_in INTEGER,
     tokens_out INTEGER,
     spend REAL,
+    latency_ms INTEGER,
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// Migrate: add latency_ms to activity_log for existing databases.
+// Runs after CREATE TABLE so fresh DBs already have the column and the
+// ALTER silently fails; existing DBs without the column get it added.
+try {
+  db.exec("ALTER TABLE activity_log ADD COLUMN latency_ms INTEGER");
+} catch {
+  // Column already exists on fresh databases (added in CREATE TABLE above).
+}
 
 /**
  * Seed (or update) the admin account on every startup.

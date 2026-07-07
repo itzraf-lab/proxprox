@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useLogout } from "@workspace/api-client-react"
-import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit } from "lucide-react"
+import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit, History, ScrollText } from "lucide-react"
 import { Button } from "./ui/button"
 import { Link } from "wouter"
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet"
@@ -22,6 +22,9 @@ function NavLinks({ location, isAdmin, onNavigate }: { location: string; isAdmin
       <Link href="/models" className={cls("/models")} onClick={onNavigate}>
         <BookOpen className="h-4 w-4 shrink-0" /> Model Catalog
       </Link>
+      <Link href="/requests" className={cls("/requests")} onClick={onNavigate}>
+        <History className="h-4 w-4 shrink-0" /> Request Log
+      </Link>
 
       {isAdmin && (
         <div className="mt-6 pt-4 border-t border-sidebar-border">
@@ -37,6 +40,9 @@ function NavLinks({ location, isAdmin, onNavigate }: { location: string; isAdmin
           </Link>
           <Link href="/admin/models" className={cls("/admin/models")} onClick={onNavigate}>
             <BrainCircuit className="h-4 w-4 shrink-0" /> Models
+          </Link>
+          <Link href="/admin/requests" className={cls("/admin/requests")} onClick={onNavigate}>
+            <ScrollText className="h-4 w-4 shrink-0" /> Global Stream
           </Link>
         </div>
       )}
