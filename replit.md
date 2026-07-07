@@ -1,45 +1,90 @@
-# [Project name]
+# Qillin
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A self-hosted AI proxy platform for teams and developers — manage model access, track Qredit spend, configure providers, and issue API keys from a unified dashboard.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/qillin-web run dev` — frontend (port auto-assigned)
+- `pnpm --filter @workspace/api-server run dev` — Express API server (at `/api`)
+- `python litellm-proxy/start.py` — LiteLLM proxy (port 8000, internal)
 - `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+
+## Required Secrets (set in Replit Secrets)
+
+- `LITELLM_MASTER_KEY` — master key for LiteLLM admin API
+- `ADMIN_PASSWORD` — password for admin account (username: Eruu, email: eruu@qillin.local)
+- `JWT_SECRET` — secret for signing JWT auth tokens
+- `DATABASE_URL` — auto-provided by Replit (PostgreSQL, used by LiteLLM)
+
+## Non-Secret Env Vars
+
+- `ADMIN_USERNAME` — admin display name (default: Eruu)
+- `LITELLM_URL` — internal LiteLLM URL (default: http://localhost:8000)
+- `LITELLM_PORT` — LiteLLM listen port (default: 8000)
+- `LITELLM_DATABASE_URL` — LiteLLM DB (defaults to DATABASE_URL)
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Frontend: React 19 + Vite 7 + Tailwind CSS 4 + Wouter (routing)
+- API: Express 5 (at `/api`)
+- DB (app data): SQLite via better-sqlite3 (stored in `./data/qillin.db`)
+- DB (LiteLLM): PostgreSQL via Prisma (Replit's built-in, for LiteLLM internal data)
+- Auth: JWT (HS256, 7-day expiry), stored in `localStorage` as `qillin_token`
+- AI Proxy: LiteLLM proxy (Python, port 8000 internal)
+- API codegen: Orval (from OpenAPI spec in `lib/api-spec/openapi.yaml`)
 
-## Where things live
+## Currency
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+1 Qredit = $1 USD. All costs and balances shown in Qredits throughout the UI.
 
-## Architecture decisions
+## Where Things Live
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- `lib/api-spec/openapi.yaml` — source of truth for all API contracts
+- `lib/api-client-react/src/generated/` — generated React Query hooks (do not edit)
+- `artifacts/qillin-web/src/pages/` — all React pages
+- `artifacts/qillin-web/src/lib/api.ts` — JWT token management + custom fetch
+- `artifacts/api-server/src/db/index.ts` — SQLite setup + schema + admin seed
+- `artifacts/api-server/src/routes/` — Express route handlers
+- `artifacts/api-server/src/lib/litellm.ts` — LiteLLM admin API client
+- `litellm-proxy/config.yaml` — LiteLLM proxy config
+- `data/qillin.db` — SQLite database (created at runtime)
 
-## Product
+## Architecture
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+```
+Browser → Replit Proxy → React frontend (/)
+                       → Express API (/api) → SQLite (qillin.db)
+                                           → LiteLLM proxy (localhost:8000)
+                       LiteLLM proxy (internal) → PostgreSQL (LiteLLM tables)
+```
 
-## User preferences
+## Admin Access
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- URL: `/login`
+- Email: `eruu@qillin.local`
+- Password: value of `ADMIN_PASSWORD` secret
+- Role: admin (full access to `/admin/*` routes)
+
+## Adding AI Providers
+
+1. Log in as admin → Admin → Providers → Add Provider
+2. Set name, type (openai/anthropic/custom), base URL (for custom)
+3. Add API keys with labels and priorities (round-robin or priority-first)
+4. Use "Fetch Models" to auto-discover available models from the provider
+
+## User Preferences
+
+- Admin username: Eruu
+- Currency: Qredits (Qr), 1 Qredit = $1 USD
+- Providers supported: OpenAI, Anthropic, custom 3rd-party (OpenAI-compatible API)
+- Load balancing: round-robin or priority-first per provider
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- LiteLLM requires `prisma generate` before first start — the `start.py` handles this automatically
+- LiteLLM requires PostgreSQL (not SQLite) for its virtual key/spend tracking features
+- `better-sqlite3` is a native module — it must be in `onlyBuiltDependencies` in `pnpm-workspace.yaml` and in `external` in `build.mjs` (both already configured)
+- After any `lib/api-spec/openapi.yaml` change, run `pnpm --filter @workspace/api-spec run codegen`
+- The admin seed runs once on first API server startup if `ADMIN_PASSWORD` is set
+- JWT tokens are not invalidated server-side (stateless); logout just clears localStorage

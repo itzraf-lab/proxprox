@@ -235,7 +235,7 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
   // Sync to LiteLLM
   if (isLiteLLMAvailable() && (qredits != null || allowedModels !== undefined)) {
     litellmUpdateUser({
-      userId,
+      userId: String(userId),
       maxBudget: qredits ?? user.qredits,
       allowedModels: allowedModels ?? (user.allowed_models ? JSON.parse(user.allowed_models) : null),
     }).catch((err: any) => req.log.warn({ err }, "LiteLLM user update failed"));
@@ -286,7 +286,7 @@ router.post("/users/:userId/credits", async (req: AuthRequest, res) => {
     .run(newQredits, userId);
 
   if (isLiteLLMAvailable()) {
-    litellmUpdateUser({ userId, maxBudget: newQredits }).catch((err: any) =>
+    litellmUpdateUser({ userId: String(userId), maxBudget: newQredits }).catch((err: any) =>
       req.log.warn({ err }, "LiteLLM budget update failed"),
     );
   }
@@ -392,6 +392,39 @@ router.delete("/providers/:providerId", (_req, res) => {
   res.json({ message: "Provider deleted" });
 });
 
+// Validate that a URL is safe to fetch (no SSRF: must be public HTTP/HTTPS, no private ranges)
+function validateProviderUrl(rawUrl: string): { ok: true; url: URL } | { ok: false; reason: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, reason: "Invalid URL format" };
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return { ok: false, reason: "Only http and https URLs are allowed" };
+  }
+  const host = parsed.hostname.toLowerCase();
+  // Block private/link-local/loopback ranges
+  const privatePatterns = [
+    /^localhost$/,
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^192\.168\./,
+    /^169\.254\./,
+    /^::1$/,
+    /^fc00:/,
+    /^fe80:/,
+    /^0\./,
+  ];
+  for (const re of privatePatterns) {
+    if (re.test(host)) {
+      return { ok: false, reason: "URL resolves to a private or internal address" };
+    }
+  }
+  return { ok: true, url: parsed };
+}
+
 // POST /api/admin/providers/:providerId/fetch-models
 router.post("/providers/:providerId/fetch-models", async (req: AuthRequest, res) => {
   const { providerId } = req.params;
@@ -408,10 +441,20 @@ router.post("/providers/:providerId/fetch-models", async (req: AuthRequest, res)
     return;
   }
 
+  // Resolve which base URL to use — for custom providers, validate it
+  const resolvedBaseUrl: string | undefined = baseUrl ?? provider.base_url ?? undefined;
+  if (provider.type === "custom" && resolvedBaseUrl) {
+    const check = validateProviderUrl(resolvedBaseUrl);
+    if (!check.ok) {
+      res.status(400).json({ error: `Invalid provider URL: ${check.reason}` });
+      return;
+    }
+  }
+
   try {
     const models = await fetchModelsFromProvider({
       type: provider.type,
-      baseUrl: baseUrl ?? provider.base_url,
+      baseUrl: resolvedBaseUrl,
       apiKey,
     });
     res.json(models);

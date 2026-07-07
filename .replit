@@ -24,13 +24,12 @@ args = "LiteLLM Proxy"
 name = "LiteLLM Proxy"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python litellm-proxy/start.py"
-waitForPort = 8000
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"
@@ -50,3 +49,11 @@ ADMIN_USERNAME = "Eruu"
 LITELLM_DATABASE_URL = "sqlite:///./data/litellm.db"
 LITELLM_PORT = "8000"
 LITELLM_URL = "http://localhost:8000"
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 80

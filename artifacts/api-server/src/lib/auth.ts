@@ -1,7 +1,10 @@
 import jwt from "jsonwebtoken";
 import { db } from "../db/index.js";
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "qillin-dev-secret-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required but not set.");
+}
 const JWT_EXPIRY = "7d";
 
 export interface JwtPayload {
