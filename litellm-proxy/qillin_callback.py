@@ -49,31 +49,35 @@ class QillinLogger(CustomLogger):
     def _fire(self, kwargs: dict, response_obj, start_time, end_time) -> None:
         try:
             print(f"[QillinLogger] _fire called, model={kwargs.get('model')}")
+            # LiteLLM stores request headers and key metadata in litellm_params.metadata,
+            # NOT in the top-level kwargs["metadata"]. Check both locations.
+            lp = kwargs.get("litellm_params") or {}
+            lp_meta = lp.get("metadata") or {}
+            lp_headers = lp_meta.get("headers") or {}
+            top_meta = kwargs.get("metadata") or {}
+            top_headers = top_meta.get("headers") or {}
+
             # User ID lookup order:
-            # 1. "user" field in the OpenAI request body (set by LiteLLM from virtual-key user association)
-            # 2. litellm_params["user"] (same, different nesting)
-            # 3. metadata["user_id"] (explicit metadata injection)
-            # 4. metadata["headers"]["x-user-id"] — the header Qillin's proxy middleware sets
-            #    LiteLLM stores all request headers in kwargs["metadata"]["headers"]
-            # 5. user_api_key_user_id from LiteLLM key auth
-            metadata = kwargs.get("metadata") or {}
-            headers = metadata.get("headers") or {}
+            # 1. "user" field in the OpenAI request body
+            # 2. litellm_params["user"]
+            # 3. litellm_params.metadata["user_api_key_user_id"] (LiteLLM virtual-key field)
+            # 4. litellm_params.metadata.headers["x-user-id"] (injected by Qillin proxy middleware)
+            # 5. top-level metadata fallbacks (older LiteLLM versions)
             user_id = (
                 kwargs.get("user")
-                or kwargs.get("litellm_params", {}).get("user")
-                or metadata.get("user_id")
-                or headers.get("x-user-id")
-                or metadata.get("user_api_key_user_id")
+                or lp.get("user")
+                or lp_meta.get("user_api_key_user_id")
+                or lp_headers.get("x-user-id")
+                or top_meta.get("user_id")
+                or top_headers.get("x-user-id")
+                or top_meta.get("user_api_key_user_id")
             )
             if not user_id:
-                lp = kwargs.get("litellm_params") or {}
-                lp_meta = lp.get("metadata") or {}
-                lp_headers = lp_meta.get("headers") or {}
                 slo = kwargs.get("standard_logging_object") or {}
                 # Log only header keys (never values) to avoid leaking auth tokens.
                 print(
                     f"[QillinLogger] No user_id found — skipping event. "
-                    f"header_keys={sorted(lp_headers.keys())!r} "
+                    f"lp_header_keys={sorted(lp_headers.keys())!r} "
                     f"lp_meta.user_api_key_user_id={'present' if lp_meta.get('user_api_key_user_id') else 'absent'} "
                     f"slo.user_api_key_user_id={'present' if slo.get('user_api_key_user_id') else 'absent'}"
                 )
