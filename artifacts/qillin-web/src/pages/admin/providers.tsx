@@ -1,7 +1,8 @@
 import * as React from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
-import { useGetAdminProviders, useCreateAdminProvider, useDeleteAdminProvider, useFetchProviderModels, getGetAdminProvidersQueryKey } from "@workspace/api-client-react"
+import { useGetAdminProviders, useCreateAdminProvider, useDeleteAdminProvider, getGetAdminProvidersQueryKey } from "@workspace/api-client-react"
+import { getToken } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -130,7 +131,7 @@ function AdminProvidersContent() {
 function AddProviderDialog() {
   const [open, setOpen] = React.useState(false)
   const createProvider = useCreateAdminProvider()
-  const fetchModels = useFetchProviderModels()
+  const [isTesting, setIsTesting] = React.useState(false)
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -141,6 +142,7 @@ function AddProviderDialog() {
   
   const [keys, setKeys] = React.useState<ProviderApiKeyInput[]>([{ key: "", priority: 1 }])
   const [fetchedModels, setFetchedModels] = React.useState<{id: string, name: string}[] | null>(null)
+  const [testError, setTestError] = React.useState<string | null>(null)
 
   const reset = () => {
     setName("")
@@ -149,17 +151,38 @@ function AddProviderDialog() {
     setLb('round_robin')
     setKeys([{ key: "", priority: 1 }])
     setFetchedModels(null)
+    setTestError(null)
   }
 
-  const handleFetchModels = () => {
+  const handleFetchModels = async () => {
     if (!keys[0].key) return toast({ title: "API key required", variant: "destructive" })
-    fetchModels.mutate(
-      { data: { apiKey: keys[0].key, baseUrl: type === 'custom' ? baseUrl : undefined } },
-      {
-        onSuccess: (data) => setFetchedModels(data),
-        onError: () => toast({ title: "Failed to connect to provider", variant: "destructive" })
+    if (type === 'custom' && !baseUrl) return toast({ title: "Base URL required for custom providers", variant: "destructive" })
+    setIsTesting(true)
+    setFetchedModels(null)
+    setTestError(null)
+    try {
+      const token = getToken()
+      const res = await fetch('/api/admin/providers/test-connection', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ type, baseUrl: type === 'custom' ? baseUrl : undefined, apiKey: keys[0].key }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setTestError(data?.error ?? 'Connection failed')
+        toast({ title: "Connection failed", variant: "destructive" })
+      } else {
+        setFetchedModels(data)
       }
-    )
+    } catch (err: any) {
+      setTestError(err.message ?? 'Network error')
+      toast({ title: "Failed to connect to provider", variant: "destructive" })
+    } finally {
+      setIsTesting(false)
+    }
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -273,12 +296,17 @@ function AddProviderDialog() {
               </div>
 
               <div className="pt-4 border-t">
-                <Button type="button" variant="secondary" className="w-full rounded-none font-mono uppercase text-xs" onClick={handleFetchModels} disabled={fetchModels.isPending || !keys[0].key}>
-                  {fetchModels.isPending ? "Testing Connection..." : "Test Connection & View Models"}
+                <Button type="button" variant="secondary" className="w-full rounded-none font-mono uppercase text-xs" onClick={handleFetchModels} disabled={isTesting || !keys[0].key}>
+                  {isTesting ? "Testing Connection..." : "Test Connection & View Models"}
                 </Button>
                 {fetchedModels && (
                   <div className="mt-4 p-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 font-mono text-xs">
                     Connection success. Detected {fetchedModels.length} models.
+                  </div>
+                )}
+                {testError && (
+                  <div className="mt-4 p-2 bg-destructive/10 border border-destructive/30 text-destructive font-mono text-xs break-all">
+                    {testError}
                   </div>
                 )}
               </div>

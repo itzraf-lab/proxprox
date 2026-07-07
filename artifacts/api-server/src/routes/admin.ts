@@ -306,6 +306,33 @@ router.post("/users/:userId/credits", async (req: AuthRequest, res) => {
   res.json(formatAdminUser(updated));
 });
 
+// ── Provider connection test (no existing provider required) ──────────────────
+
+router.post("/providers/test-connection", async (req: AuthRequest, res) => {
+  const { type, baseUrl, apiKey } = req.body;
+
+  if (!apiKey) {
+    res.status(400).json({ error: "apiKey is required" });
+    return;
+  }
+
+  if (type === "custom" && baseUrl) {
+    const check = validateProviderUrl(baseUrl);
+    if (!check.ok) {
+      res.status(400).json({ error: `Invalid provider URL: ${check.reason}` });
+      return;
+    }
+  }
+
+  try {
+    const models = await fetchModelsFromProvider({ type: type ?? "custom", baseUrl, apiKey });
+    res.json(models);
+  } catch (err: any) {
+    req.log.warn({ err }, "test-connection failed");
+    res.status(400).json({ error: err.message ?? "Failed to connect to provider" });
+  }
+});
+
 // ── Providers ─────────────────────────────────────────────────────────────────
 
 router.get("/providers", (_req, res) => {
