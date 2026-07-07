@@ -92,4 +92,4 @@ const proxyOptions: Options = {
   },
 };
 
-export const litellmProxy = createProxyMiddleware(pathFilter, proxyOptions);
+export const litellmProxy = createProxyMiddleware({ ...proxyOptions, filter: pathFilter });
