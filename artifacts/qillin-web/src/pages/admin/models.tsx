@@ -3,7 +3,6 @@ import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
 import { useGetAdminModels, useCreateAdminModel, useUpdateAdminModel, useDeleteAdminModel, useGetAdminProviders, getGetAdminModelsQueryKey } from "@workspace/api-client-react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,7 +15,7 @@ import { formatCurrency } from "@/lib/utils"
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { Model, ModelInput } from "@workspace/api-client-react"
-import { ModelCombobox } from "@/components/model-combobox"
+import { ModelCombobox, type ConfiguredModel } from "@/components/model-combobox"
 import { fmtCtx, type KnownModel } from "@/lib/known-models"
 
 export default function AdminModels() {
@@ -38,6 +37,20 @@ function AdminModelsContent() {
   const [editModel, setEditModel] = React.useState<Model | null>(null)
   const [isEditOpen, setIsEditOpen] = React.useState(false)
 
+  const configuredModels: ConfiguredModel[] = React.useMemo(
+    () =>
+      (models ?? []).map(m => ({
+        id: m.id,
+        name: m.name,
+        litellmModel: m.litellmModel,
+        provider: m.provider,
+        contextWindow: m.contextWindow,
+        inputCostPerMtok: m.inputCostPerMtok,
+        outputCostPerMtok: m.outputCostPerMtok,
+      })),
+    [models]
+  )
+
   const handleDelete = (id: string) => {
     if (!confirm("Remove this model from the catalog?")) return
     deleteModel.mutate({ modelId: id }, {
@@ -55,86 +68,135 @@ function AdminModelsContent() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-sidebar/10">
-      <div className="flex items-center justify-between">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-sidebar/10">
+      <div className="flex items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold uppercase tracking-tight font-mono text-primary flex items-center gap-3">
-            <BrainCircuit className="h-8 w-8" />
-            Model Definitions
+          <h1 className="text-2xl md:text-3xl font-bold uppercase tracking-tight font-mono text-primary flex items-center gap-3">
+            <BrainCircuit className="h-6 w-6 md:h-8 md:w-8" />
+            Models
           </h1>
-          <p className="text-muted-foreground font-mono text-sm mt-1 uppercase tracking-wider">Configure routing targets and pricing parameters</p>
+          <p className="text-muted-foreground font-mono text-xs mt-1 uppercase tracking-wider hidden sm:block">Configure routing targets and pricing</p>
         </div>
-        <ModelDialog mode="create" />
+        <ModelDialog mode="create" configuredModels={configuredModels} />
       </div>
 
-      <Card className="rounded-none border-2 shadow-lg">
+      {/* Desktop table */}
+      <Card className="rounded-none border-2 shadow-lg hidden md:block">
         <CardContent className="p-0">
-          <Table>
-            <TableHeader className="bg-background">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="font-mono text-xs uppercase tracking-wider font-bold">Identity</TableHead>
-                <TableHead className="font-mono text-xs uppercase tracking-wider font-bold">Provider Route</TableHead>
-                <TableHead className="font-mono text-xs uppercase tracking-wider font-bold text-right">Context</TableHead>
-                <TableHead className="font-mono text-xs uppercase tracking-wider font-bold text-right">In Cost</TableHead>
-                <TableHead className="font-mono text-xs uppercase tracking-wider font-bold text-right">Out Cost</TableHead>
-                <TableHead className="font-mono text-xs uppercase tracking-wider font-bold text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center font-mono py-12 text-muted-foreground">Loading catalog...</TableCell>
-                </TableRow>
-              ) : models?.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center font-mono py-12 text-muted-foreground">Catalog is empty</TableCell>
-                </TableRow>
-              ) : (
-                models?.map(model => (
-                  <TableRow key={model.id} className={!model.enabled ? "opacity-50" : ""}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {!model.enabled && <Badge variant="secondary" className="rounded-none px-1 py-0 text-[8px] h-4">OFF</Badge>}
-                        <div className="font-bold text-sm font-mono">{model.name}</div>
-                      </div>
-                      <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{model.litellmModel}</div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="rounded-none font-mono text-xs border-primary text-primary flex w-fit items-center gap-1">
-                        <Server className="w-3 h-3" /> {model.provider}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {model.contextWindow ? fmtCtx(model.contextWindow) : "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="font-mono font-bold text-sm">{formatCurrency(model.inputCostPerMtok)}</div>
-                      <div className="text-[9px] font-mono text-muted-foreground uppercase">Qr / MTok</div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="font-mono font-bold text-sm">{formatCurrency(model.outputCostPerMtok)}</div>
-                      <div className="text-[9px] font-mono text-muted-foreground uppercase">Qr / MTok</div>
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none hover:bg-sidebar/30" onClick={() => openEdit(model)}>
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => handleDelete(model.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-background border-b">
+                <tr>
+                  <th className="font-mono text-xs uppercase tracking-wider font-bold text-left p-3">Identity</th>
+                  <th className="font-mono text-xs uppercase tracking-wider font-bold text-left p-3">Provider</th>
+                  <th className="font-mono text-xs uppercase tracking-wider font-bold text-right p-3">Context</th>
+                  <th className="font-mono text-xs uppercase tracking-wider font-bold text-right p-3">In Cost</th>
+                  <th className="font-mono text-xs uppercase tracking-wider font-bold text-right p-3">Out Cost</th>
+                  <th className="font-mono text-xs uppercase tracking-wider font-bold text-right p-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  <tr><td colSpan={6} className="text-center font-mono py-12 text-muted-foreground">Loading catalog...</td></tr>
+                ) : !models?.length ? (
+                  <tr><td colSpan={6} className="text-center font-mono py-12 text-muted-foreground">Catalog is empty — define your first model</td></tr>
+                ) : (
+                  models.map(model => (
+                    <tr key={model.id} className={`border-b hover:bg-sidebar/10 ${!model.enabled ? "opacity-50" : ""}`}>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          {!model.enabled && <Badge variant="secondary" className="rounded-none px-1 py-0 text-[8px] h-4">OFF</Badge>}
+                          <span className="font-bold font-mono">{model.name}</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{model.litellmModel}</div>
+                      </td>
+                      <td className="p-3">
+                        <Badge variant="outline" className="rounded-none font-mono text-xs border-primary text-primary flex w-fit items-center gap-1">
+                          <Server className="w-3 h-3" /> {model.provider}
+                        </Badge>
+                      </td>
+                      <td className="p-3 text-right font-mono text-sm">{model.contextWindow ? fmtCtx(model.contextWindow) : "—"}</td>
+                      <td className="p-3 text-right">
+                        <div className="font-mono font-bold text-sm">{formatCurrency(model.inputCostPerMtok)}</div>
+                        <div className="text-[9px] font-mono text-muted-foreground uppercase">Qr/MTok</div>
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="font-mono font-bold text-sm">{formatCurrency(model.outputCostPerMtok)}</div>
+                        <div className="text-[9px] font-mono text-muted-foreground uppercase">Qr/MTok</div>
+                      </td>
+                      <td className="p-3 text-right space-x-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none hover:bg-sidebar/30" onClick={() => openEdit(model)}>
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none text-destructive hover:bg-destructive/10" onClick={() => handleDelete(model.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
 
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-3">
+        {isLoading ? (
+          <div className="text-center font-mono py-12 text-muted-foreground text-sm">Loading catalog...</div>
+        ) : !models?.length ? (
+          <div className="text-center font-mono py-12 text-muted-foreground text-sm border-2 border-dashed p-8">
+            Catalog is empty — define your first model
+          </div>
+        ) : (
+          models.map(model => (
+            <Card key={model.id} className={`rounded-none border-2 ${!model.enabled ? "opacity-50" : ""}`}>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {!model.enabled && <Badge variant="secondary" className="rounded-none px-1 py-0 text-[8px] h-4">OFF</Badge>}
+                      <span className="font-bold font-mono text-sm">{model.name}</span>
+                    </div>
+                    <div className="font-mono text-[10px] text-muted-foreground mt-0.5 break-all">{model.litellmModel}</div>
+                    <Badge variant="outline" className="rounded-none font-mono text-[10px] border-primary text-primary mt-1.5 flex w-fit items-center gap-1">
+                      <Server className="w-2.5 h-2.5" /> {model.provider}
+                    </Badge>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none hover:bg-sidebar/30" onClick={() => openEdit(model)}>
+                      <Edit2 className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none text-destructive hover:bg-destructive/10" onClick={() => handleDelete(model.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 border-t pt-3">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground">Context</div>
+                    <div className="font-mono font-bold text-sm">{model.contextWindow ? fmtCtx(model.contextWindow) : "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground">In /MTok</div>
+                    <div className="font-mono font-bold text-sm">{formatCurrency(model.inputCostPerMtok)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground">Out /MTok</div>
+                    <div className="font-mono font-bold text-sm">{formatCurrency(model.outputCostPerMtok)}</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
+
       {editModel && (
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-          <DialogContent className="max-w-2xl rounded-none border-2">
-            <ModelForm mode="edit" initialData={editModel} onClose={() => setIsEditOpen(false)} />
+          <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl rounded-none border-2 max-h-[90vh] overflow-y-auto">
+            <ModelForm mode="edit" initialData={editModel} configuredModels={configuredModels} onClose={() => setIsEditOpen(false)} />
           </DialogContent>
         </Dialog>
       )}
@@ -142,24 +204,30 @@ function AdminModelsContent() {
   )
 }
 
-function ModelDialog({ mode }: { mode: 'create' }) {
+function ModelDialog({ mode, configuredModels }: { mode: 'create'; configuredModels: ConfiguredModel[] }) {
   const [open, setOpen] = React.useState(false)
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="rounded-none font-mono uppercase tracking-wider">
-          <Plus className="mr-2 w-4 h-4" /> Define Model
+        <Button className="rounded-none font-mono uppercase tracking-wider shrink-0">
+          <Plus className="mr-1.5 w-4 h-4" /> <span className="hidden sm:inline">Define </span>Model
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl rounded-none border-2">
-        <ModelForm mode={mode} onClose={() => setOpen(false)} />
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl rounded-none border-2 max-h-[90vh] overflow-y-auto">
+        <ModelForm mode={mode} configuredModels={configuredModels} onClose={() => setOpen(false)} />
       </DialogContent>
     </Dialog>
   )
 }
 
-function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', initialData?: Model, onClose: () => void }) {
+function ModelForm({
+  mode, initialData, configuredModels, onClose
+}: {
+  mode: 'create' | 'edit'
+  initialData?: Model
+  configuredModels: ConfiguredModel[]
+  onClose: () => void
+}) {
   const { data: providers } = useGetAdminProviders()
   const createModel = useCreateAdminModel()
   const updateModel = useUpdateAdminModel()
@@ -224,30 +292,29 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-5">
       <DialogHeader>
-        <DialogTitle className="font-mono uppercase tracking-wider text-xl">
+        <DialogTitle className="font-mono uppercase tracking-wider text-lg">
           {mode === 'create' ? 'Define Model' : 'Modify Model'}
         </DialogTitle>
-        <DialogDescription className="font-mono text-xs">Map a user-facing name to an internal LiteLLM route.</DialogDescription>
+        <DialogDescription className="font-mono text-xs">Map a user-facing name to a LiteLLM route.</DialogDescription>
       </DialogHeader>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label className="font-mono text-xs uppercase tracking-wider flex items-center gap-2">
-              LiteLLM Target
-            </Label>
+            <Label className="font-mono text-xs uppercase tracking-wider">LiteLLM Target</Label>
             <ModelCombobox
               value={litellmModel}
               onChange={handleModelSelect}
+              configuredModels={configuredModels}
             />
           </div>
 
           <div className="space-y-2">
             <Label className="font-mono text-xs uppercase tracking-wider">
               Display Name
-              {autoFilled && <span className="ml-2 text-emerald-600 dark:text-emerald-400 normal-case">auto-filled</span>}
+              {autoFilled && <span className="ml-2 text-emerald-600 dark:text-emerald-400 normal-case text-[10px]">auto-filled</span>}
             </Label>
             <Input
               value={name}
@@ -278,7 +345,7 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
             <Label className="font-mono text-xs uppercase tracking-wider flex items-center gap-1.5">
               Context Window (tokens)
               {autoFilled && contextWindow && (
-                <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 normal-case">
+                <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 normal-case text-[10px]">
                   <Sparkles className="h-3 w-3" /> {fmtCtx(parseInt(contextWindow))}
                 </span>
               )}
@@ -321,7 +388,7 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
             />
           </div>
 
-          <div className="flex items-center gap-3 pt-2">
+          <div className="flex items-center gap-3 pt-1">
             <Checkbox
               checked={enabled}
               onCheckedChange={c => setEnabled(c === true)}
@@ -333,11 +400,11 @@ function ModelForm({ mode, initialData, onClose }: { mode: 'create' | 'edit', in
         </div>
       </div>
 
-      <DialogFooter className="border-t pt-4">
-        <Button type="button" variant="outline" onClick={onClose} className="rounded-none font-mono uppercase">Cancel</Button>
+      <DialogFooter className="border-t pt-4 flex-col sm:flex-row gap-2">
+        <Button type="button" variant="outline" onClick={onClose} className="rounded-none font-mono uppercase w-full sm:w-auto">Cancel</Button>
         <Button
           type="submit"
-          className="rounded-none font-mono uppercase"
+          className="rounded-none font-mono uppercase w-full sm:w-auto"
           disabled={createModel.isPending || updateModel.isPending}
         >
           Commit Configuration
