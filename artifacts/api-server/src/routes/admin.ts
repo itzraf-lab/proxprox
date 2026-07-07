@@ -362,7 +362,6 @@ router.post("/providers", async (req: AuthRequest, res) => {
   `).run(id, name, type, baseUrl ?? null, loadBalancing);
 
   // Insert API keys
-  const insertedKeys: any[] = [];
   if (Array.isArray(apiKeys)) {
     for (const k of apiKeys) {
       db.prepare(`

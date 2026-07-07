@@ -98,29 +98,67 @@ db.exec(`
   );
 `);
 
-// Seed admin user from env if not exists
+/**
+ * Seed (or update) the admin account on every startup.
+ *
+ * The environment is the source of truth for admin credentials:
+ *   ADMIN_EMAIL    — admin email address  (required; default: <username>@qillin.local)
+ *   ADMIN_USERNAME — admin display name   (optional; default: Eruu)
+ *   ADMIN_PASSWORD — admin password       (required; skip seed if missing)
+ *
+ * If an admin already exists, their email, name, and password are updated to
+ * match the current environment variables so you can rotate credentials by
+ * changing the secrets without touching the database.
+ */
 function seedAdmin() {
   const adminUsername = process.env.ADMIN_USERNAME ?? "Eruu";
   const adminPassword = process.env.ADMIN_PASSWORD;
-  const adminEmail = process.env.ADMIN_EMAIL ?? `${adminUsername.toLowerCase()}@qillin.local`;
+  const adminEmail =
+    process.env.ADMIN_EMAIL ?? `${adminUsername.toLowerCase()}@qillin.local`;
 
   if (!adminPassword) {
     console.warn("[DB] ADMIN_PASSWORD not set, skipping admin seed");
     return;
   }
 
+  const hash = bcrypt.hashSync(adminPassword, 10);
+
   const existing = db
     .prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
-    .get();
+    .get() as { id: string } | undefined;
 
   if (!existing) {
-    const hash = bcrypt.hashSync(adminPassword, 10);
     const id = uuidv4();
     db.prepare(`
       INSERT INTO users (id, email, name, password_hash, role, qredits)
       VALUES (?, ?, ?, ?, 'admin', 999999)
     `).run(id, adminEmail, adminUsername, hash);
     console.info(`[DB] Admin user created: ${adminEmail}`);
+  } else {
+    // Update email, name, and password from environment on every startup.
+    // This allows credential rotation without touching the database.
+    //
+    // Guard against UNIQUE email collision: if another (non-admin) user already
+    // holds the target email, skip the update and log a warning so the operator
+    // knows they need to resolve the conflict rather than crashing on startup.
+    const collision = db
+      .prepare("SELECT id FROM users WHERE email = ? AND id != ?")
+      .get(adminEmail, existing.id);
+
+    if (collision) {
+      console.warn(
+        `[DB] Skipping admin email update: "${adminEmail}" is already used by another account. ` +
+          "Change ADMIN_EMAIL to a unique address.",
+      );
+      return;
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET email = ?, name = ?, password_hash = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(adminEmail, adminUsername, hash, existing.id);
+    console.info(`[DB] Admin user updated: ${adminEmail}`);
   }
 }
 

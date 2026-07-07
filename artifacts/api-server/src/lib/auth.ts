@@ -1,10 +1,15 @@
 import jwt from "jsonwebtoken";
 import { db } from "../db/index.js";
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is required but not set.");
-}
+// Fail fast at module load — JWT_SECRET is required for the server to be secure.
+const JWT_SECRET: string = (() => {
+  const s = process.env.JWT_SECRET;
+  if (!s) {
+    throw new Error("JWT_SECRET environment variable is required but not set.");
+  }
+  return s;
+})();
+
 const JWT_EXPIRY = "7d";
 
 export interface JwtPayload {
@@ -19,7 +24,7 @@ export function signToken(payload: JwtPayload): string {
 
 export function verifyToken(token: string): JwtPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as JwtPayload;
+    return jwt.verify(token, JWT_SECRET) as unknown as JwtPayload;
   } catch {
     return null;
   }

@@ -12,7 +12,8 @@ A self-hosted AI proxy platform for teams and developers — manage model access
 ## Required Secrets (set in Replit Secrets)
 
 - `LITELLM_MASTER_KEY` — master key for LiteLLM admin API
-- `ADMIN_PASSWORD` — password for admin account (username: Eruu, email: eruu@qillin.local)
+- `ADMIN_PASSWORD` — admin account password (rotatable; updates the DB on each startup)
+- `ADMIN_EMAIL` — admin account email address (e.g. `admin@example.com`)
 - `JWT_SECRET` — secret for signing JWT auth tokens
 - `DATABASE_URL` — auto-provided by Replit (PostgreSQL, used by LiteLLM)
 

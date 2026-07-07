@@ -5,6 +5,7 @@ import pinoHttp from "pino-http";
 import router from "./routes/index.js";
 import v1Router from "./routes/v1.js";
 import { litellmProxy } from "./routes/proxy.js";
+import { requireApiOrJwtAuth } from "./middlewares/requireAuth.js";
 import { logger } from "./lib/logger.js";
 
 const app: Express = express();
@@ -44,16 +45,24 @@ app.use(
   }),
 );
 
-// ── Native /v1 handlers (before the proxy) ───────────────────────────────────
-// These intercept specific /v1/* paths (e.g. GET /v1/models) with Qillin's own
-// auth and DB-sourced data. express.json() is applied here so these handlers
-// can parse bodies; the proxy below must remain before the global body-parser.
-app.use("/v1", express.json({ limit: "1mb" }), v1Router);
-
-// ── Streaming AI proxy (/v1/*) ────────────────────────────────────────────────
-// Mounted BEFORE the global body-parser so the raw request stream is piped
-// directly to LiteLLM — no buffering, full SSE streaming support.
-// The proxy internally allowlists only OpenAI-compatible endpoints.
+// ── /v1 route stack ───────────────────────────────────────────────────────────
+//
+// Order matters here:
+//
+//  1. Auth middleware — validates JWT or Qillin API key, sets req.user and
+//     req.headers["x-qillin-litellm-key"] for the proxy.  Must run BEFORE
+//     body parsing so we never consume the request body stream for streaming
+//     endpoints like /v1/chat/completions.
+//
+//  2. Native handlers (v1Router) — intercepts GET /v1/models and any other
+//     Qillin-native /v1 routes. No body parser needed (all are GET today).
+//     Unmatched routes call next() and fall through to the proxy.
+//
+//  3. Streaming proxy — pipes the raw body stream to LiteLLM. Must receive
+//     the request BEFORE any body parser that would buffer/consume the stream.
+//
+app.use("/v1", requireApiOrJwtAuth);
+app.use("/v1", v1Router);
 app.use("/v1", litellmProxy);
 
 // ── Body parsing (management API only) ───────────────────────────────────────

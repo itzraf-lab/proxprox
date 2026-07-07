@@ -1,27 +1,32 @@
 /**
  * /v1/* routes handled natively by Qillin (before the LiteLLM proxy).
  *
+ * Authentication is handled by the app-level requireApiOrJwtAuth middleware
+ * applied in app.ts before this router. req.user is always populated here.
+ *
  * These handlers intercept specific OpenAI-compatible endpoints so Qillin can
- * apply its own auth and return DB-sourced data. Any path NOT matched here
- * falls through to the LiteLLM streaming proxy mounted in app.ts.
+ * return DB-sourced data. Any path NOT matched here falls through to the
+ * LiteLLM streaming proxy mounted in app.ts.
  */
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { requireAuth, type AuthRequest } from "../middlewares/requireAuth.js";
+import type { AuthRequest } from "../middlewares/requireAuth.js";
 
 const router = Router();
 
 /**
  * GET /v1/models
  *
- * OpenAI-compatible model listing. Requires a valid Qillin Bearer token.
+ * OpenAI-compatible model listing. Requires a valid Qillin Bearer token or
+ * Qillin API key (enforced by app-level middleware in app.ts).
+ *
  * Returns only enabled models; respects the per-user `allowed_models` list
  * when set.
  *
  * Response shape matches the OpenAI /v1/models spec:
- *   { object: "list", data: [ { id, object, created, owned_by, context_window, ... } ] }
+ *   { object: "list", data: [ { id, object, created, owned_by, ... } ] }
  */
-router.get("/models", requireAuth, (req: AuthRequest, res) => {
+router.get("/models", (req: AuthRequest, res) => {
   const user = req.user!;
 
   const rows = db
