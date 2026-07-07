@@ -49,6 +49,7 @@ ADMIN_USERNAME = "Eruu"
 LITELLM_DATABASE_URL = "sqlite:///./data/litellm.db"
 LITELLM_PORT = "8000"
 LITELLM_URL = "http://localhost:8000"
+QILLIN_INTERNAL_URL = "http://localhost:8080"
 
 [[ports]]
 localPort = 8080
