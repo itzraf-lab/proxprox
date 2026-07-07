@@ -11,25 +11,35 @@ import { logger } from "./logger.js";
 /**
  * Build the litellm_params.model string for a given provider type.
  *
- * LiteLLM requires the "openai/<model>" prefix for custom OpenAI-compatible
- * endpoints so it knows which protocol to use. Without it, non-standard model
- * names (e.g. "gigi/deepseek-v4-pro") are treated as unknown and LiteLLM
- * refuses to route them.
+ * LiteLLM's routing is driven by the model-string prefix:
+ *   - "anthropic/<model>" → routes to native Anthropic API (ignores api_base)
+ *   - "openai/<model>"   → uses OpenAI-compatible wire format with the given api_base
  *
- * For native Anthropic providers the prefix is "anthropic/".
- * For known OpenAI models pointed at the official API, no prefix is needed
- * (LiteLLM already knows them), but adding "openai/" is still safe.
+ * For CUSTOM providers (e.g. OpenRouter, Crimson) we MUST always use the
+ * "openai/" prefix — even when the model name itself starts with "anthropic/"
+ * or "openai/". Without it, LiteLLM bypasses the custom api_base and hits
+ * the native provider directly (using the OpenRouter key against Anthropic,
+ * which returns an HTML error page).
+ *
+ * The model name stored after stripping the "openai/" prefix is forwarded
+ * verbatim as the "model" field in the upstream request, so OpenRouter
+ * receives e.g. "anthropic/claude-sonnet-4" exactly as it expects.
  */
 export function litellmModelString(litellmModel: string, providerType: string): string {
-  // Don't double-prefix
-  if (litellmModel.startsWith("openai/") || litellmModel.startsWith("anthropic/")) {
-    return litellmModel;
-  }
   if (providerType === "anthropic") {
-    return `anthropic/${litellmModel}`;
+    // Native Anthropic provider: use "anthropic/" prefix (no api_base involved)
+    return litellmModel.startsWith("anthropic/")
+      ? litellmModel
+      : `anthropic/${litellmModel}`;
   }
-  // "custom" and "openai" both use the OpenAI-compatible wire format
-  return `openai/${litellmModel}`;
+  // Custom / OpenAI-compatible providers: always wrap with "openai/" so
+  // LiteLLM honours the custom api_base for ALL model names.
+  // Strip any existing "openai/" prefix first to avoid double-prefixing
+  // if the stored litellm_model already starts with "openai/".
+  const base = litellmModel.startsWith("openai/")
+    ? litellmModel.slice("openai/".length)
+    : litellmModel;
+  return `openai/${base}`;
 }
 
 /**
