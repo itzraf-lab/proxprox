@@ -347,8 +347,8 @@ router.get("/providers", (_req, res) => {
   res.json(result);
 });
 
-router.post("/providers", (req, res) => {
-  const { name, type, baseUrl, loadBalancing, apiKeys } = req.body;
+router.post("/providers", async (req: AuthRequest, res) => {
+  const { name, type, baseUrl, loadBalancing, apiKeys, models } = req.body;
 
   if (!name || !type || !loadBalancing) {
     res.status(400).json({ error: "name, type, and loadBalancing are required" });
@@ -362,6 +362,7 @@ router.post("/providers", (req, res) => {
   `).run(id, name, type, baseUrl ?? null, loadBalancing);
 
   // Insert API keys
+  const insertedKeys: any[] = [];
   if (Array.isArray(apiKeys)) {
     for (const k of apiKeys) {
       db.prepare(`
@@ -370,10 +371,45 @@ router.post("/providers", (req, res) => {
       `).run(uuidv4(), id, k.key, k.label ?? null, k.priority ?? 0);
     }
   }
+  const primaryKey = (db.prepare("SELECT key_value FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1").get(id) as any)?.key_value;
+
+  // Auto-create selected models
+  if (Array.isArray(models) && models.length > 0) {
+    for (const m of models) {
+      if (!m.id) continue;
+      const modelId = uuidv4();
+      db.prepare(`
+        INSERT INTO models (id, name, litellm_model, provider_id, context_window, input_cost_per_mtok, output_cost_per_mtok, enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      `).run(
+        modelId,
+        m.id,
+        m.id,
+        id,
+        m.contextWindow ?? 4096,
+        m.inputCostPerMtok ?? 0,
+        m.outputCostPerMtok ?? 0,
+      );
+
+      if (isLiteLLMAvailable()) {
+        litellmAddModel({
+          modelName: m.id,
+          litellmParams: {
+            model: m.id,
+            apiBase: baseUrl ?? undefined,
+            apiKey: primaryKey,
+            inputCostPerToken: m.inputCostPerMtok != null ? m.inputCostPerMtok / 1_000_000 : undefined,
+            outputCostPerToken: m.outputCostPerMtok != null ? m.outputCostPerMtok / 1_000_000 : undefined,
+          },
+        }).catch((err: any) => req.log?.warn({ err, model: m.id }, "LiteLLM model add failed"));
+      }
+    }
+  }
 
   const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(id) as any;
   const keys = db.prepare("SELECT * FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC").all(id) as any[];
-  res.status(201).json(formatProvider(provider, keys, 0));
+  const modelCount = (db.prepare("SELECT COUNT(*) as c FROM models WHERE provider_id = ?").get(id) as any).c;
+  res.status(201).json(formatProvider(provider, keys, Number(modelCount)));
 });
 
 router.put("/providers/:providerId", (req, res) => {

@@ -177,12 +177,21 @@ export async function litellmGetSpendByModel() {
 
 // ── Provider model fetching ───────────────────────────────────────────────────
 
+export interface FetchedModelInfo {
+  id: string;
+  name: string;
+  contextWindow: number | null;
+  inputCostPerMtok: number | null;
+  outputCostPerMtok: number | null;
+  metaSource: "known" | "provider" | "unknown";
+}
+
 export async function fetchModelsFromProvider(params: {
   type: string;
   baseUrl?: string | null;
   apiKey: string;
-}): Promise<Array<{ id: string; name: string; contextWindow: number | null }>> {
-  // For OpenAI-compatible providers, call /v1/models
+}): Promise<FetchedModelInfo[]> {
+  const { lookupModelMeta } = await import("./model-metadata.js");
   const baseUrl = params.baseUrl ?? getDefaultBaseUrl(params.type);
 
   try {
@@ -200,11 +209,43 @@ export async function fetchModelsFromProvider(params: {
     const data = await res.json() as any;
     const modelList = data?.data ?? data?.models ?? [];
 
-    return modelList.map((m: any) => ({
-      id: m.id ?? m.name,
-      name: m.id ?? m.name,
-      contextWindow: m.context_length ?? m.context_window ?? null,
-    }));
+    return modelList.map((m: any) => {
+      const modelId: string = m.id ?? m.name ?? "";
+      const providerContext: number | null = m.context_length ?? m.context_window ?? null;
+
+      const meta = lookupModelMeta(modelId);
+
+      if (meta) {
+        return {
+          id: modelId,
+          name: modelId,
+          contextWindow: meta.contextWindow,
+          inputCostPerMtok: meta.inputCostPerMtok,
+          outputCostPerMtok: meta.outputCostPerMtok,
+          metaSource: "known" as const,
+        };
+      }
+
+      if (providerContext != null) {
+        return {
+          id: modelId,
+          name: modelId,
+          contextWindow: providerContext,
+          inputCostPerMtok: null,
+          outputCostPerMtok: null,
+          metaSource: "provider" as const,
+        };
+      }
+
+      return {
+        id: modelId,
+        name: modelId,
+        contextWindow: null,
+        inputCostPerMtok: null,
+        outputCostPerMtok: null,
+        metaSource: "unknown" as const,
+      };
+    });
   } catch (err: any) {
     throw new Error(`Failed to fetch models: ${err.message}`);
   }
