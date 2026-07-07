@@ -1,4 +1,6 @@
 - [LiteLLM SQLite limitation](litellm-sqlite.md) — LiteLLM requires PostgreSQL for virtual keys/spend tracking; SQLite is not supported by LiteLLM itself.
+- [LiteLLM openai/ prefix required](litellm-openai-prefix.md) — custom OpenAI-compatible models must use "openai/<model>" in litellm_params.model or LiteLLM silently ignores them (200 OK but not persisted/routed).
+- [LiteLLM model sync on startup](litellm-model-sync.md) — API server syncs all enabled Qillin DB models to LiteLLM on boot via sync.ts; models added while LiteLLM is down are re-registered next startup.
 - [better-sqlite3 build approval](better-sqlite3-build.md) — must be in onlyBuiltDependencies in pnpm-workspace.yaml and external in build.mjs or pnpm install will skip native build.
 - [LiteLLM prisma generate](litellm-prisma.md) — must run prisma generate with LiteLLM's bundled schema before first proxy start; start.py handles this automatically.
 - [JWT secret fail-fast](jwt-secret.md) — JWT_SECRET must fail at module load time (not silently fallback) to prevent token forgery on misconfigured deployments.

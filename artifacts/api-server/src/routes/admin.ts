@@ -9,6 +9,7 @@ import {
   isLiteLLMAvailable,
   fetchModelsFromProvider,
 } from "../lib/litellm.js";
+import { syncModelsToLiteLLM, litellmModelString } from "../lib/sync.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -69,6 +70,20 @@ function maskKey(key: string): string {
   if (key.length <= 8) return "***";
   return key.slice(0, 4) + "..." + key.slice(-4);
 }
+
+// ── LiteLLM model re-sync ─────────────────────────────────────────────────────
+
+router.post("/sync-models", async (req: AuthRequest, res) => {
+  if (!isLiteLLMAvailable()) {
+    res.status(503).json({ error: "LiteLLM is not configured" });
+    return;
+  }
+  // Run in background and respond immediately so the HTTP request doesn't hang
+  syncModelsToLiteLLM().catch((err) =>
+    req.log.error({ err }, "Manual model sync failed"),
+  );
+  res.json({ message: "Model sync started" });
+});
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
@@ -394,7 +409,7 @@ router.post("/providers", async (req: AuthRequest, res) => {
         litellmAddModel({
           modelName: m.id,
           litellmParams: {
-            model: m.id,
+            model: litellmModelString(m.id, type),
             apiBase: baseUrl ?? undefined,
             apiKey: primaryKey,
             inputCostPerToken: m.inputCostPerMtok != null ? m.inputCostPerMtok / 1_000_000 : undefined,
@@ -569,7 +584,7 @@ router.post("/models", async (req: AuthRequest, res) => {
     litellmAddModel({
       modelName: name,
       litellmParams: {
-        model: litellmModel,
+        model: litellmModelString(litellmModel, provider.type),
         apiBase: provider.base_url ?? undefined,
         apiKey: primaryKey,
         inputCostPerToken: inputCostPerMtok != null ? inputCostPerMtok / 1_000_000 : undefined,

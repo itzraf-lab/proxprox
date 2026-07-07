@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { syncModelsToLiteLLM } from "./lib/sync.js";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,10 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Kick off model sync in the background — don't block startup.
+  // syncModelsToLiteLLM waits for LiteLLM to be ready internally.
+  syncModelsToLiteLLM().catch((err) =>
+    logger.error({ err }, "Model sync failed unexpectedly"),
+  );
 });
