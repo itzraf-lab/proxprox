@@ -41,12 +41,20 @@ router.get("/models", (req: AuthRequest, res) => {
     )
     .all() as any[];
 
-  // Optionally filter by per-user allowed_models (comma-separated model names)
+  // Optionally filter by per-user allowed_models.
+  // Stored as JSON array (e.g. ["gpt-4","claude-3"]); fall back to legacy
+  // comma-separated string for backwards compatibility.
   let models = rows;
   if (user.allowed_models) {
-    const allowed = new Set(
-      user.allowed_models.split(",").map((s: string) => s.trim()),
-    );
+    let allowedList: string[] = [];
+    try {
+      const parsed = JSON.parse(user.allowed_models);
+      allowedList = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      // Legacy: plain comma-separated string
+      allowedList = user.allowed_models.split(",").map((s: string) => s.trim());
+    }
+    const allowed = new Set(allowedList);
     models = rows.filter((m) => allowed.has(m.name) || allowed.has(m.litellm_model));
   }
 
