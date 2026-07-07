@@ -152,6 +152,65 @@ export async function litellmListModels() {
   return litellmFetch<any>("/model/info");
 }
 
+/**
+ * Sync a model update to LiteLLM.
+ *
+ * LiteLLM's /model/update endpoint requires its internal UUID, which Qillin
+ * doesn't persist. Instead we: find the old entry by model_name, delete it,
+ * then re-add with the new params. This handles cost changes, renames,
+ * provider swaps, and enable/disable all in one path.
+ *
+ * Resilience: if the re-add step fails after a successful delete, the function
+ * attempts to re-add the old entry (compensation) so the model is not silently
+ * removed from LiteLLM. On compensation failure the error is re-thrown — the
+ * model will be re-registered on the next server restart via syncModelsToLiteLLM.
+ *
+ * @param oldModelName  The model_name currently registered in LiteLLM (before rename)
+ * @param newConfig     New params; pass null to only delete (i.e. disable)
+ */
+export async function litellmSyncModelUpdate(
+  oldModelName: string,
+  newConfig: {
+    modelName: string;
+    litellmParams: {
+      model: string;
+      apiBase?: string;
+      apiKey?: string;
+      inputCostPerToken?: number;
+      outputCostPerToken?: number;
+    };
+  } | null,
+): Promise<void> {
+  // Find the existing LiteLLM entry by its model_name
+  const info = await litellmListModels() as any;
+  const entry = (info.data ?? []).find((m: any) => m.model_name === oldModelName);
+
+  if (entry) {
+    await litellmDeleteModel(entry.model_info.id);
+  }
+
+  if (newConfig) {
+    try {
+      await litellmAddModel(newConfig);
+    } catch (addErr) {
+      // Add failed after delete — attempt to restore the old entry so the model
+      // is not silently absent from LiteLLM. On compensation failure, rethrow
+      // so the caller can log a clear warning; the startup sync will repair it.
+      if (entry) {
+        try {
+          await litellmAddModel({
+            modelName: entry.model_name,
+            litellmParams: entry.litellm_params,
+          });
+        } catch {
+          // compensation also failed — swallow and let caller handle the original error
+        }
+      }
+      throw addErr;
+    }
+  }
+}
+
 // ── Spend & activity ─────────────────────────────────────────────────────────
 
 export async function litellmGetSpendLogs(params?: {

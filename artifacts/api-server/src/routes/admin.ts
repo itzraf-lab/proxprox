@@ -6,6 +6,7 @@ import {
   litellmUpdateUser,
   litellmAddModel,
   litellmDeleteModel,
+  litellmSyncModelUpdate,
   isLiteLLMAvailable,
   fetchModelsFromProvider,
 } from "../lib/litellm.js";
@@ -688,17 +689,54 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
 
   const isEnabled = enabled !== false ? 1 : 0;
 
+  // Resolved final values (what will be written to DB)
+  const newName         = name          ?? existing.name;
+  const newLitellmModel = litellmModel  ?? existing.litellm_model;
+  const newProviderId   = providerId    ?? existing.provider_id;
+  const newContextWindow = contextWindow ?? existing.context_window;
+  const newInputCost    = inputCostPerMtok  ?? existing.input_cost_per_mtok;
+  const newOutputCost   = outputCostPerMtok ?? existing.output_cost_per_mtok;
+
   db.prepare(`
     UPDATE models SET name = ?, litellm_model = ?, provider_id = ?, context_window = ?,
     input_cost_per_mtok = ?, output_cost_per_mtok = ?, enabled = ?, updated_at = datetime('now')
     WHERE id = ?
-  `).run(name ?? existing.name, litellmModel ?? existing.litellm_model, providerId ?? existing.provider_id,
-    contextWindow ?? existing.context_window, inputCostPerMtok ?? existing.input_cost_per_mtok,
-    outputCostPerMtok ?? existing.output_cost_per_mtok, isEnabled, modelId);
+  `).run(newName, newLitellmModel, newProviderId, newContextWindow,
+    newInputCost, newOutputCost, isEnabled, modelId);
 
   const model = db.prepare(`
     SELECT m.*, p.name as provider_name FROM models m LEFT JOIN providers p ON m.provider_id = p.id WHERE m.id = ?
   `).get(modelId) as any;
+
+  // Sync pricing/config changes to LiteLLM.
+  // Use the OLD name to find the existing LiteLLM entry (handles renames),
+  // then delete it and re-add with the new params if still enabled.
+  if (isLiteLLMAvailable()) {
+    const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(newProviderId) as any;
+    const keys = db.prepare(
+      "SELECT key_value FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1"
+    ).all(newProviderId) as any[];
+
+    try {
+      await litellmSyncModelUpdate(
+        existing.name,  // old name — used to locate the entry in LiteLLM
+        isEnabled && provider
+          ? {
+              modelName: newName,
+              litellmParams: {
+                model: litellmModelString(newLitellmModel, provider.type),
+                apiBase: provider.base_url ?? undefined,
+                apiKey: keys[0]?.key_value,
+                inputCostPerToken: newInputCost != null ? newInputCost / 1_000_000 : undefined,
+                outputCostPerToken: newOutputCost != null ? newOutputCost / 1_000_000 : undefined,
+              },
+            }
+          : null, // null = delete only (disabled model)
+      );
+    } catch (err: any) {
+      req.log.warn({ err }, "LiteLLM model sync failed — DB updated but LiteLLM may be out of sync; will repair on next restart");
+    }
+  }
 
   res.json(formatModel(model, model.provider_name));
 });
