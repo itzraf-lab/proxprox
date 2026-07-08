@@ -167,3 +167,4 @@ pnpm --filter @workspace/api-spec run codegen   # regenerate API client after ed
 | `JWT_SECRET ... required` on API start | Missing secret | Set `JWT_SECRET` in `.env` |
 | Admin account not created | `ADMIN_EMAIL`/`ADMIN_PASSWORD` missing | Set them in `.env` before starting the API server |
 | 403 "user not allowed to access model" | Wrong model identifier in allowlist | In the admin panel, use the model's display name, not the internal `litellm_model` value |
+

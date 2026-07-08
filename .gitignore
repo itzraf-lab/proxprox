@@ -10,6 +10,11 @@ out-tsc
 
 # dependencies
 node_modules
+.venv
+
+# local environment & runtime data
+.env
+data/
 
 # IDEs and editors
 /.idea
