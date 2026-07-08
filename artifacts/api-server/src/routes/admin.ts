@@ -17,6 +17,44 @@ router.use(requireAdmin);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Safely parse the `allowed_models` DB column into a string array.
+ * Handles both JSON arrays and legacy comma-separated strings.
+ */
+function parseAllowedModels(raw: string | null | undefined): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    // Legacy: plain comma-separated string
+    return raw.split(",").map((s: string) => s.trim()).filter(Boolean);
+  }
+}
+
+/**
+ * Resolve a list of model identifiers to their canonical display names
+ * (models.name). Accepts either the display name or the litellm_model target —
+ * whichever the caller provides — and always returns the name, because that is
+ * what LiteLLM's model registry keys on (model_name = name).
+ *
+ * Resolution is deterministic: an exact `name` match always wins over a
+ * `litellm_model` match, so models whose name happens to match another
+ * model's litellm_model are never incorrectly remapped.
+ *
+ * Unknown identifiers are passed through unchanged.
+ */
+function resolveModelNames(raw: string[] | null): string[] | null {
+  if (!raw) return null;
+  return raw.map((id) => {
+    // Prefer exact name match; fall back to litellm_model match.
+    const byName = db.prepare("SELECT name FROM models WHERE name = ? LIMIT 1").get(id) as any;
+    if (byName) return byName.name;
+    const byTarget = db.prepare("SELECT name FROM models WHERE litellm_model = ? LIMIT 1").get(id) as any;
+    return byTarget?.name ?? id;
+  });
+}
+
 function formatAdminUser(u: any): object {
   return {
     id: u.id,
@@ -26,7 +64,7 @@ function formatAdminUser(u: any): object {
     qredits: u.qredits,
     totalSpend: u.total_spend ?? 0,
     totalRequests: Number(u.total_requests ?? 0),
-    allowedModels: u.allowed_models ? JSON.parse(u.allowed_models) : null,
+    allowedModels: parseAllowedModels(u.allowed_models),
     isActive: u.is_active === 1,
     createdAt: u.created_at,
     litellmUserId: u.litellm_user_id ?? null,
@@ -309,9 +347,24 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
     updates.push("is_active = ?");
     params.push(isActive ? 1 : 0);
   }
-  if (allowedModels !== undefined) {
+  // Validate allowedModels shape: must be null or an array of strings.
+  if (allowedModels !== undefined && allowedModels !== null) {
+    if (!Array.isArray(allowedModels) || allowedModels.some((m: any) => typeof m !== "string")) {
+      res.status(400).json({ error: "allowedModels must be null or an array of strings" });
+      return;
+    }
+  }
+
+  // Resolve model identifiers to display names before storing/syncing.
+  // LiteLLM's registry keys on models.name (display name), so the allowlist
+  // must use those same values — not litellm_model (target) strings.
+  const resolvedModels = allowedModels !== undefined
+    ? resolveModelNames(allowedModels)
+    : undefined;
+
+  if (resolvedModels !== undefined) {
     updates.push("allowed_models = ?");
-    params.push(allowedModels ? JSON.stringify(allowedModels) : null);
+    params.push(resolvedModels ? JSON.stringify(resolvedModels) : null);
   }
   if (role != null) {
     updates.push("role = ?");
@@ -325,11 +378,13 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
   }
 
   // Sync to LiteLLM
-  if (isLiteLLMAvailable() && (qredits != null || allowedModels !== undefined)) {
+  if (isLiteLLMAvailable() && (qredits != null || resolvedModels !== undefined)) {
     litellmUpdateUser({
       userId: String(userId),
       maxBudget: qredits ?? user.qredits,
-      allowedModels: allowedModels ?? (user.allowed_models ? JSON.parse(user.allowed_models) : null),
+      allowedModels: resolvedModels !== undefined
+        ? resolvedModels
+        : resolveModelNames(parseAllowedModels(user.allowed_models)), // re-resolve existing values on non-model updates
     }).catch((err: any) => req.log.warn({ err }, "LiteLLM user update failed"));
   }
 
