@@ -1,6 +1,7 @@
 import * as React from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useLogout } from "@workspace/api-client-react"
+import { useQueryClient } from "@tanstack/react-query"
 import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit, History, ScrollText } from "lucide-react"
 import { Button } from "./ui/button"
 import { Link } from "wouter"
@@ -74,14 +75,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation()
   const { data: user, isLoading } = useGetMe({ query: { retry: false } })
   const logout = useLogout()
+  const queryClient = useQueryClient()
   const [mobileOpen, setMobileOpen] = React.useState(false)
 
   const handleLogout = () => {
+    const finishLogout = () => {
+      localStorage.removeItem("qillin_token")
+      // Clear the cached user (and every other cached response) so no stale,
+      // previously-logged-in user data lingers in the sidebar/UI after sign out.
+      queryClient.clear()
+      setLocation("/")
+    }
+
     logout.mutate(undefined, {
-      onSuccess: () => {
-        localStorage.removeItem("qillin_token")
-        setLocation("/")
-      },
+      onSuccess: finishLogout,
+      // Even if the server call fails (e.g. token already expired), the user
+      // still expects to be signed out locally.
+      onError: finishLogout,
     })
   }
 

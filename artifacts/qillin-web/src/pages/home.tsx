@@ -25,14 +25,14 @@ export default function Home() {
                 <span className="text-primary">Every LLM.</span>
               </h1>
               <p className="mt-6 text-base sm:text-lg leading-8 text-muted-foreground font-mono">
-                Self-hosted LLM API gateway. Bring your own provider keys, issue scoped access
-                to teams and apps, and route every request through infrastructure engineered
-                to never log message content — built for developers shipping production
-                systems and writers running long, uninterrupted creative sessions.
+                One account, one API key, every model you need. Get instant access to leading
+                LLMs through a single OpenAI-compatible endpoint — no juggling provider accounts,
+                no waiting, no one reading over your shoulder. Built for developers shipping
+                production apps and writers running long, uninterrupted creative sessions.
               </p>
               <div className="mt-10 flex flex-wrap items-center gap-4">
                 <Button asChild size="lg" className="rounded-none font-mono uppercase tracking-wider">
-                  <Link href="/register">Initialize System</Link>
+                  <Link href="/register">Get Your API Key</Link>
                 </Button>
                 <Button asChild variant="outline" size="lg" className="rounded-none font-mono uppercase tracking-wider">
                   <Link href="/models">Explore Models</Link>
@@ -82,15 +82,15 @@ export default function Home() {
               <div className="flex items-start gap-3">
                 <ShieldCheck className="h-5 w-5 flex-none text-primary mt-0.5" aria-hidden="true" />
                 <div>
-                  <p className="font-mono text-sm font-semibold uppercase text-foreground">Self-hosted &amp; isolated</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Runs on your own infrastructure. Your provider keys and data never leave your control.</p>
+                  <p className="font-mono text-sm font-semibold uppercase text-foreground">Private &amp; secure</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Your account and API key are isolated from every other user. Nobody else can see your activity.</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <KeyRound className="h-5 w-5 flex-none text-primary mt-0.5" aria-hidden="true" />
                 <div>
-                  <p className="font-mono text-sm font-semibold uppercase text-foreground">Scoped access keys</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Issue per-user, per-app keys with independent budgets. Revoke instantly, no shared secrets.</p>
+                  <p className="font-mono text-sm font-semibold uppercase text-foreground">Your own access key</p>
+                  <p className="mt-1 text-sm text-muted-foreground">One key for every model. Revoke or regenerate it instantly, any time, from your dashboard.</p>
                 </div>
               </div>
             </div>
@@ -122,10 +122,10 @@ export default function Home() {
             <div className="flex flex-col border p-6 bg-card">
               <dt className="flex items-center gap-x-3 text-base font-semibold leading-7 text-foreground font-mono uppercase">
                 <KeyRound className="h-5 w-5 flex-none text-primary" aria-hidden="true" />
-                Key Management
+                Your API Key
               </dt>
               <dd className="mt-4 flex flex-auto flex-col text-base leading-7 text-muted-foreground">
-                <p className="flex-auto">Issue isolated API keys for teams, apps, and individual users. Revoke access instantly. Set strict budgets in Qredits.</p>
+                <p className="flex-auto">Generate your key in seconds and drop it into any app. Regenerate or revoke it yourself, any time.</p>
               </dd>
             </div>
             <div className="flex flex-col border p-6 bg-card">
@@ -134,7 +134,7 @@ export default function Home() {
                 Private by Design
               </dt>
               <dd className="mt-4 flex flex-auto flex-col text-base leading-7 text-muted-foreground">
-                <p className="flex-auto">Message content is never persisted or reviewed. Only anonymized usage metadata is kept, solely to power billing.</p>
+                <p className="flex-auto">Your messages are never persisted or reviewed by anyone. Only anonymized usage metadata is kept, solely to power your billing.</p>
               </dd>
             </div>
             <div className="flex flex-col border p-6 bg-card">
@@ -143,7 +143,7 @@ export default function Home() {
                 Cost Tracking
               </dt>
               <dd className="mt-4 flex flex-auto flex-col text-base leading-7 text-muted-foreground">
-                <p className="flex-auto">Every token tracked and converted to Qredits (1 Qr = $1). Pinpoint exact spend per model, key, and user.</p>
+                <p className="flex-auto">Every token you use is tracked and converted to Qredits (1 Qr = $1), so you always know exactly what you've spent.</p>
               </dd>
             </div>
           </div>
