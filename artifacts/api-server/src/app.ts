@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import compression from "compression";
+import helmet from "helmet";
 import pinoHttp from "pino-http";
 import router from "./routes/index.js";
 import v1Router from "./routes/v1.js";
@@ -9,6 +10,25 @@ import { requireApiOrJwtAuth } from "./middlewares/requireAuth.js";
 import { logger } from "./lib/logger.js";
 
 const app: Express = express();
+
+// Requests arrive through Replit's reverse proxy, so the first hop's
+// X-Forwarded-For entry is the real client IP. Trusting exactly one hop lets
+// express-rate-limit (auth.ts) and req.ip key off the actual caller instead
+// of collapsing every user behind the proxy into a single bucket/IP.
+app.set("trust proxy", 1);
+
+// Don't advertise the framework in responses.
+app.disable("x-powered-by");
+
+// ── Security headers ─────────────────────────────────────────────────────────
+// CSP is left to the frontend's own hosting (this app only serves JSON/streams),
+// so it's disabled here to avoid breaking the streaming proxy responses.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 
 // ── Logging ──────────────────────────────────────────────────────────────────
 app.use(
@@ -36,10 +56,14 @@ app.use(
 );
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
+// Auth is Bearer-token based (Authorization header), never cookies, so
+// `credentials: true` is unnecessary and is intentionally left off — it would
+// otherwise let any origin read authenticated responses if it ever obtained a
+// token (e.g. via XSS elsewhere). `origin: true` reflects the caller's origin
+// so the API can be reached from any client app that already holds a token.
 app.use(
   cors({
     origin: true,
-    credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),

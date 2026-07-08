@@ -6,3 +6,5 @@
 - [better-sqlite3 build approval](better-sqlite3-build.md) — must be in onlyBuiltDependencies in pnpm-workspace.yaml and external in build.mjs or pnpm install will skip native build.
 - [LiteLLM prisma generate](litellm-prisma.md) — must run prisma generate with LiteLLM's bundled schema before first proxy start; start.py handles this automatically.
 - [JWT secret fail-fast](jwt-secret.md) — JWT_SECRET must fail at module load time (not silently fallback) to prevent token forgery on misconfigured deployments.
+- [Provider key encryption at rest](provider-key-encryption.md) — provider_api_keys.key_value is AES-256-GCM encrypted; new read/write paths must encrypt/decrypt too.
+- [Rate limit trust proxy](rate-limit-trust-proxy.md) — express-rate-limit needs app.set("trust proxy", 1) behind Replit's proxy or all users share one IP bucket.

@@ -69,17 +69,17 @@ function AdminRequestsContent() {
             )}
           </div>
           
-          <form onSubmit={applyFilter} className="flex items-center gap-2">
-            <div className="relative">
+          <form onSubmit={applyFilter} className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:flex-none min-w-0">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Model alias..."
                 value={modelFilter}
                 onChange={(e) => setModelFilter(e.target.value)}
-                className="rounded-none border-2 font-mono text-xs w-[200px] h-8 pl-8 bg-background"
+                className="rounded-none border-2 font-mono text-xs w-full sm:w-[200px] h-8 pl-8 bg-background"
               />
             </div>
-            <Button type="submit" size="sm" className="rounded-none h-8 font-mono text-xs uppercase tracking-wider">
+            <Button type="submit" size="sm" className="rounded-none h-8 font-mono text-xs uppercase tracking-wider shrink-0">
               Filter
             </Button>
           </form>

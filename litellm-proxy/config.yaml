@@ -7,6 +7,12 @@ litellm_settings:
   # It POSTs usage/cost data to the Qillin API server after every successful
   # LLM call so Qredits can be deducted and activity_log populated in real-time.
   success_callback: ["qillin_callback.qillin_logger"]
+  # Redacts prompt/response message content from ALL logging destinations
+  # (spend logs table, callbacks, error logs) while still recording metadata
+  # needed for billing (token counts, cost, model, latency). This is required
+  # for Qillin's "no content logging" privacy guarantee to be true — without
+  # it, LiteLLM's spend-logs feature persists full request/response bodies.
+  turn_off_message_logging: true
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

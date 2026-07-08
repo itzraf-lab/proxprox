@@ -11,6 +11,7 @@ import {
   fetchModelsFromProvider,
 } from "../lib/litellm.js";
 import { syncModelsToLiteLLM, litellmModelString } from "../lib/sync.js";
+import { encryptSecret, decryptSecret } from "../lib/crypto.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -105,7 +106,8 @@ function formatModel(m: any, providerName: string) {
   };
 }
 
-function maskKey(key: string): string {
+function maskKey(storedKey: string): string {
+  const key = decryptSecret(storedKey);
   if (key.length <= 8) return "***";
   return key.slice(0, 4) + "..." + key.slice(-4);
 }
@@ -367,6 +369,10 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
     params.push(resolvedModels ? JSON.stringify(resolvedModels) : null);
   }
   if (role != null) {
+    if (role !== "user" && role !== "admin") {
+      res.status(400).json({ error: "role must be 'user' or 'admin'" });
+      return;
+    }
     updates.push("role = ?");
     params.push(role);
   }
@@ -508,16 +514,17 @@ router.post("/providers", async (req: AuthRequest, res) => {
     VALUES (?, ?, ?, ?, ?, 1)
   `).run(id, name, type, baseUrl ?? null, loadBalancing);
 
-  // Insert API keys
+  // Insert API keys (encrypted at rest)
   if (Array.isArray(apiKeys)) {
     for (const k of apiKeys) {
       db.prepare(`
         INSERT INTO provider_api_keys (id, provider_id, key_value, label, priority, fail_count)
         VALUES (?, ?, ?, ?, ?, 0)
-      `).run(uuidv4(), id, k.key, k.label ?? null, k.priority ?? 0);
+      `).run(uuidv4(), id, encryptSecret(k.key), k.label ?? null, k.priority ?? 0);
     }
   }
-  const primaryKey = (db.prepare("SELECT key_value FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1").get(id) as any)?.key_value;
+  const primaryKeyRaw = (db.prepare("SELECT key_value FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1").get(id) as any)?.key_value;
+  const primaryKey = primaryKeyRaw ? decryptSecret(primaryKeyRaw) : undefined;
 
   // Auto-create selected models
   if (Array.isArray(models) && models.length > 0) {
@@ -573,14 +580,14 @@ router.put("/providers/:providerId", (req, res) => {
     WHERE id = ?
   `).run(name, type, baseUrl ?? null, loadBalancing, providerId);
 
-  // Replace API keys if provided
+  // Replace API keys if provided (encrypted at rest)
   if (Array.isArray(apiKeys)) {
     db.prepare("DELETE FROM provider_api_keys WHERE provider_id = ?").run(providerId);
     for (const k of apiKeys) {
       db.prepare(`
         INSERT INTO provider_api_keys (id, provider_id, key_value, label, priority, fail_count)
         VALUES (?, ?, ?, ?, ?, 0)
-      `).run(uuidv4(), providerId, k.key, k.label ?? null, k.priority ?? 0);
+      `).run(uuidv4(), providerId, encryptSecret(k.key), k.label ?? null, k.priority ?? 0);
     }
   }
 
@@ -711,7 +718,7 @@ router.post("/models", async (req: AuthRequest, res) => {
   // Sync to LiteLLM
   if (isLiteLLMAvailable() && isEnabled) {
     const keys = db.prepare("SELECT * FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1").all(providerId) as any[];
-    const primaryKey = keys[0]?.key_value;
+    const primaryKey = keys[0]?.key_value ? decryptSecret(keys[0].key_value) : undefined;
 
     litellmAddModel({
       modelName: name,
@@ -781,7 +788,7 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
               litellmParams: {
                 model: litellmModelString(newLitellmModel, provider.type),
                 apiBase: provider.base_url ?? undefined,
-                apiKey: keys[0]?.key_value,
+                apiKey: keys[0]?.key_value ? decryptSecret(keys[0].key_value) : undefined,
                 inputCostPerToken: newInputCost != null ? newInputCost / 1_000_000 : undefined,
                 outputCostPerToken: newOutputCost != null ? newOutputCost / 1_000_000 : undefined,
               },

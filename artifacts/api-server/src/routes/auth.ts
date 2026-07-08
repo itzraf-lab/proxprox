@@ -1,5 +1,6 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import rateLimit from "express-rate-limit";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/index.js";
 import { signToken } from "../lib/auth.js";
@@ -7,6 +8,16 @@ import { requireAuth, type AuthRequest } from "../middlewares/requireAuth.js";
 import { litellmCreateUser, isLiteLLMAvailable } from "../lib/litellm.js";
 
 const router = Router();
+
+// Brute-force / credential-stuffing protection. Keyed by IP; both routes
+// share a counter since they're both credential entry points.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please try again later." },
+});
 
 function formatUser(u: any) {
   return {
@@ -21,7 +32,7 @@ function formatUser(u: any) {
 }
 
 // POST /api/auth/register
-router.post("/register", async (req, res) => {
+router.post("/register", authLimiter, async (req, res) => {
   const { email, password, name } = req.body;
 
   if (!email || !password || !name) {
@@ -67,7 +78,7 @@ router.post("/register", async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post("/login", (req, res) => {
+router.post("/login", authLimiter, (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {

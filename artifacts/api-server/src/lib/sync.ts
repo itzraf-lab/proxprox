@@ -7,6 +7,7 @@
 import { db } from "../db/index.js";
 import { litellmAddModel, litellmListModels, isLiteLLMAvailable } from "./litellm.js";
 import { logger } from "./logger.js";
+import { decryptSecret } from "./crypto.js";
 
 /**
  * Build the litellm_params.model string for a given provider type.
@@ -119,7 +120,7 @@ export async function syncModelsToLiteLLM(): Promise<void> {
           // persist or route it correctly.
           model: litellmModelString(m.litellm_model, m.type),
           apiBase: m.base_url ?? undefined,
-          apiKey: m.api_key ?? undefined,
+          apiKey: m.api_key ? decryptSecret(m.api_key) : undefined,
           inputCostPerToken:
             m.input_cost_per_mtok != null ? m.input_cost_per_mtok / 1_000_000 : undefined,
           outputCostPerToken:
