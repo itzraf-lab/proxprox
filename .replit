@@ -29,13 +29,12 @@ args = "Start application"
 name = "LiteLLM Proxy"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "apps/litellm-proxy/.venv/bin/python apps/litellm-proxy/start.py"
-waitForPort = 8000
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PATH=/home/runner/workspace/apps/litellm-proxy/.venv/bin:$PATH apps/litellm-proxy/.venv/bin/python apps/litellm-proxy/start.py"
 
 [[workflows.workflow]]
 name = "API Server"
@@ -60,3 +59,11 @@ waitForPort = 5000
 
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
