@@ -36,6 +36,16 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    // In Replit the app is served through a TLS proxy, so the HMR WebSocket
+    // must connect to the external domain over WSS:443 — not ws://localhost —
+    // or the socket drops repeatedly and Vite falls back to full-page reloads.
+    hmr: process.env.REPLIT_DEV_DOMAIN
+      ? {
+          host: process.env.REPLIT_DEV_DOMAIN,
+          protocol: 'wss',
+          clientPort: 443,
+        }
+      : true,
     fs: {
       strict: true,
     },
