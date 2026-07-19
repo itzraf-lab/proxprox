@@ -1,8 +1,10 @@
 /**
  * Model sync: registers all enabled Qillin DB models into LiteLLM on startup.
  *
- * Models added to Qillin while LiteLLM was down are not registered there,
- * so chat completions fail with "Invalid model name". This sync fixes the gap.
+ * With the multi-base-URL (cluster) feature each model can have N base URLs,
+ * each with M API keys. We register one LiteLLM deployment per (base_url, key)
+ * pair for every model so LiteLLM's router handles load-balancing and failover
+ * across the full set.
  */
 import { db } from "../db/index.js";
 import {
@@ -24,24 +26,14 @@ import { decryptSecret } from "./crypto.js";
  * For CUSTOM providers (e.g. OpenRouter, Crimson) we MUST always use the
  * "openai/" prefix — even when the model name itself starts with "anthropic/"
  * or "openai/". Without it, LiteLLM bypasses the custom api_base and hits
- * the native provider directly (using the OpenRouter key against Anthropic,
- * which returns an HTML error page).
- *
- * The model name stored after stripping the "openai/" prefix is forwarded
- * verbatim as the "model" field in the upstream request, so OpenRouter
- * receives e.g. "anthropic/claude-sonnet-4" exactly as it expects.
+ * the native provider directly.
  */
 export function litellmModelString(litellmModel: string, providerType: string): string {
   if (providerType === "anthropic") {
-    // Native Anthropic provider: use "anthropic/" prefix (no api_base involved)
     return litellmModel.startsWith("anthropic/")
       ? litellmModel
       : `anthropic/${litellmModel}`;
   }
-  // Custom / OpenAI-compatible providers: always wrap with "openai/" so
-  // LiteLLM honours the custom api_base for ALL model names.
-  // Strip any existing "openai/" prefix first to avoid double-prefixing
-  // if the stored litellm_model already starts with "openai/".
   const base = litellmModel.startsWith("openai/")
     ? litellmModel.slice("openai/".length)
     : litellmModel;
@@ -50,7 +42,6 @@ export function litellmModelString(litellmModel: string, providerType: string): 
 
 /**
  * Wait up to `maxWaitMs` for LiteLLM to respond, polling every `pollMs`.
- * Returns true if LiteLLM is reachable, false if timed out.
  */
 async function waitForLiteLLM(maxWaitMs = 60_000, pollMs = 5_000): Promise<boolean> {
   const deadline = Date.now() + maxWaitMs;
@@ -63,6 +54,46 @@ async function waitForLiteLLM(maxWaitMs = 60_000, pollMs = 5_000): Promise<boole
     }
   }
   return false;
+}
+
+interface ModelDeployment {
+  name: string;
+  litellm_model: string;
+  input_cost_per_mtok: number;
+  output_cost_per_mtok: number;
+  type: string;
+  base_url: string | null;
+  url_priority: number;
+  key_value: string | null;
+  key_priority: number;
+}
+
+/**
+ * Collect all (model, base_url, key) triples for enabled models.
+ *
+ * Uses provider_base_urls + provider_api_keys for the new multi-URL schema.
+ * Falls back to the legacy providers.base_url when base_url_id is NULL so
+ * that providers migrated before the column was backfilled still work.
+ */
+function getModelDeployments(): ModelDeployment[] {
+  return db.prepare(`
+    SELECT
+      m.name,
+      m.litellm_model,
+      m.input_cost_per_mtok,
+      m.output_cost_per_mtok,
+      p.type,
+      COALESCE(bu.url, p.base_url) AS base_url,
+      COALESCE(bu.priority, 0)    AS url_priority,
+      k.key_value,
+      COALESCE(k.priority, 0)     AS key_priority
+    FROM models m
+    LEFT JOIN providers p ON m.provider_id = p.id
+    LEFT JOIN provider_base_urls bu ON bu.provider_id = p.id
+    LEFT JOIN provider_api_keys k ON k.base_url_id = bu.id
+    WHERE m.enabled = 1
+    ORDER BY m.name, url_priority ASC, key_priority ASC
+  `).all() as ModelDeployment[];
 }
 
 export async function syncModelsToLiteLLM(): Promise<void> {
@@ -78,7 +109,7 @@ export async function syncModelsToLiteLLM(): Promise<void> {
     return;
   }
 
-  // Fetch model names already known to LiteLLM
+  // Fetch model names already registered in LiteLLM
   let knownNames: Set<string> = new Set();
   try {
     const info = await litellmListModels() as any;
@@ -87,73 +118,64 @@ export async function syncModelsToLiteLLM(): Promise<void> {
     logger.warn({ err }, "[sync] Could not fetch LiteLLM model list, will register all");
   }
 
-  // All enabled models from DB with provider API key
-  const models = db
-    .prepare(
-      `SELECT
-         m.name,
-         m.litellm_model,
-         m.input_cost_per_mtok,
-         m.output_cost_per_mtok,
-         p.base_url,
-         p.type,
-         (SELECT key_value FROM provider_api_keys
-          WHERE provider_id = p.id
-          ORDER BY priority ASC LIMIT 1) AS api_key
-       FROM models m
-       LEFT JOIN providers p ON m.provider_id = p.id
-       WHERE m.enabled = 1`,
-    )
-    .all() as any[];
+  const deployments = getModelDeployments();
+
+  // Group deployments by model name; skip models already registered in LiteLLM
+  const byModel = new Map<string, ModelDeployment[]>();
+  for (const d of deployments) {
+    if (!byModel.has(d.name)) byModel.set(d.name, []);
+    byModel.get(d.name)!.push(d);
+  }
 
   let registered = 0;
   let skipped = 0;
   let failed = 0;
 
-  for (const m of models) {
-    if (knownNames.has(m.name)) {
+  for (const [modelName, deps] of byModel.entries()) {
+    if (knownNames.has(modelName)) {
       skipped++;
       continue;
     }
 
-    try {
-      await litellmAddModel({
-        modelName: m.name,
-        litellmParams: {
-          // LiteLLM requires "openai/<model>" prefix for custom OpenAI-compatible
-          // endpoints. Without it, LiteLLM treats the model as unknown and won't
-          // persist or route it correctly.
-          model: litellmModelString(m.litellm_model, m.type),
-          apiBase: m.base_url ?? undefined,
-          apiKey: m.api_key ? decryptSecret(m.api_key) : undefined,
-          inputCostPerToken:
-            m.input_cost_per_mtok != null ? m.input_cost_per_mtok / 1_000_000 : undefined,
-          outputCostPerToken:
-            m.output_cost_per_mtok != null ? m.output_cost_per_mtok / 1_000_000 : undefined,
-        },
-      });
-      registered++;
-    } catch (err) {
-      logger.warn({ err, model: m.name }, "[sync] Failed to register model in LiteLLM");
-      failed++;
+    // Register every (base_url, key) deployment for this model.
+    // LiteLLM treats multiple entries with the same model_name as a pool
+    // and load-balances / fails-over across them automatically.
+    let modelRegistered = false;
+    for (const d of deps) {
+      if (!d.key_value) continue; // skip if no key
+      try {
+        await litellmAddModel({
+          modelName: d.name,
+          litellmParams: {
+            model: litellmModelString(d.litellm_model, d.type),
+            apiBase: d.base_url ?? undefined,
+            apiKey: decryptSecret(d.key_value),
+            inputCostPerToken:
+              d.input_cost_per_mtok != null ? d.input_cost_per_mtok / 1_000_000 : undefined,
+            outputCostPerToken:
+              d.output_cost_per_mtok != null ? d.output_cost_per_mtok / 1_000_000 : undefined,
+          },
+        });
+        modelRegistered = true;
+      } catch (err) {
+        logger.warn({ err, model: d.name, base_url: d.base_url }, "[sync] Failed to register deployment in LiteLLM");
+        failed++;
+      }
     }
+    if (modelRegistered) registered++;
   }
 
-  logger.info({ registered, skipped, failed, total: models.length }, "[sync] Model sync complete");
+  logger.info(
+    { registered, skipped, failed, totalModels: byModel.size },
+    "[sync] Model sync complete"
+  );
 
   await reconcileUserBudgets();
 }
 
 /**
  * Push each user's credit ceiling (users.credit_limit) into LiteLLM as
- * `max_budget`. This is the CEILING on cumulative spend, not the remaining
- * balance. Historically the app synced the shrinking `qredits` balance as
- * `max_budget`, which LiteLLM's ever-growing cumulative spend would eventually
- * cross — blocking users ("ExceededBudget … Spend=X, Budget=Y") while their
- * balance still read positive. Running this on every startup is idempotent and
- * self-heals any drift, including users stuck by the old behaviour.
- *
- * Only `max_budget` is sent, so LiteLLM model allowlists are left untouched.
+ * `max_budget`.
  */
 export async function reconcileUserBudgets(): Promise<void> {
   if (!isLiteLLMAvailable()) return;
@@ -169,8 +191,6 @@ export async function reconcileUserBudgets(): Promise<void> {
       await litellmUpdateUser({ userId: String(u.id), maxBudget: u.credit_limit });
       synced++;
     } catch (err) {
-      // A user that doesn't exist yet in LiteLLM is expected on first contact;
-      // log at debug so it doesn't drown out real failures.
       logger.debug({ err, userId: u.id }, "[sync] Budget reconcile skipped for user");
       failed++;
     }

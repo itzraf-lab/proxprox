@@ -6,7 +6,7 @@ import {
   litellmUpdateUser,
   litellmAddModel,
   litellmDeleteModel,
-  litellmSyncModelUpdate,
+  litellmListModels,
   isLiteLLMAvailable,
   fetchModelsFromProvider,
 } from "../lib/litellm.js";
@@ -18,37 +18,19 @@ router.use(requireAdmin);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Safely parse the `allowed_models` DB column into a string array.
- * Handles both JSON arrays and legacy comma-separated strings.
- */
 function parseAllowedModels(raw: string | null | undefined): string[] | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : null;
   } catch {
-    // Legacy: plain comma-separated string
     return raw.split(",").map((s: string) => s.trim()).filter(Boolean);
   }
 }
 
-/**
- * Resolve a list of model identifiers to their canonical display names
- * (models.name). Accepts either the display name or the litellm_model target —
- * whichever the caller provides — and always returns the name, because that is
- * what LiteLLM's model registry keys on (model_name = name).
- *
- * Resolution is deterministic: an exact `name` match always wins over a
- * `litellm_model` match, so models whose name happens to match another
- * model's litellm_model are never incorrectly remapped.
- *
- * Unknown identifiers are passed through unchanged.
- */
 function resolveModelNames(raw: string[] | null): string[] | null {
   if (!raw) return null;
   return raw.map((id) => {
-    // Prefer exact name match; fall back to litellm_model match.
     const byName = db.prepare("SELECT name FROM models WHERE name = ? LIMIT 1").get(id) as any;
     if (byName) return byName.name;
     const byTarget = db.prepare("SELECT name FROM models WHERE litellm_model = ? LIMIT 1").get(id) as any;
@@ -56,11 +38,6 @@ function resolveModelNames(raw: string[] | null): string[] | null {
   });
 }
 
-/**
- * A user's cumulative spend from the local activity log. This mirrors LiteLLM's
- * own per-user cumulative spend and is used to derive the credit ceiling:
- *   credit_limit = cumulative_spend + remaining_balance (qredits)
- */
 function userTotalSpend(userId: string): number {
   const row = db
     .prepare(
@@ -87,20 +64,47 @@ function formatAdminUser(u: any): object {
   };
 }
 
-function formatProvider(p: any, keys: any[], modelCount: number) {
+function maskKey(storedKey: string): string {
+  const key = decryptSecret(storedKey);
+  if (key.length <= 8) return "***";
+  return key.slice(0, 4) + "..." + key.slice(-4);
+}
+
+/**
+ * Format a provider with its full base-URL/key hierarchy.
+ *
+ * Each provider_base_urls row is returned in priority order, with its
+ * associated provider_api_keys nested inside (also in priority order).
+ */
+function formatProvider(p: any, modelCount: number) {
+  const baseUrlRows = db
+    .prepare("SELECT * FROM provider_base_urls WHERE provider_id = ? ORDER BY priority ASC")
+    .all(p.id) as any[];
+
+  const baseUrls = baseUrlRows.map((bu: any) => {
+    const keys = db
+      .prepare("SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC")
+      .all(bu.id) as any[];
+    return {
+      id: bu.id,
+      url: bu.url ?? null,
+      priority: bu.priority,
+      keys: keys.map((k: any) => ({
+        id: k.id,
+        label: k.label ?? null,
+        keyMasked: maskKey(k.key_value),
+        priority: k.priority,
+        failCount: k.fail_count,
+      })),
+    };
+  });
+
   return {
     id: p.id,
     name: p.name,
     type: p.type,
-    baseUrl: p.base_url ?? null,
     loadBalancing: p.load_balancing,
-    apiKeys: keys.map((k: any) => ({
-      id: k.id,
-      label: k.label ?? null,
-      keyMasked: maskKey(k.key_value),
-      priority: k.priority,
-      failCount: k.fail_count,
-    })),
+    baseUrls,
     modelCount,
     isActive: p.is_active === 1,
     createdAt: p.created_at,
@@ -121,12 +125,6 @@ function formatModel(m: any, providerName: string) {
   };
 }
 
-function maskKey(storedKey: string): string {
-  const key = decryptSecret(storedKey);
-  if (key.length <= 8) return "***";
-  return key.slice(0, 4) + "..." + key.slice(-4);
-}
-
 // ── LiteLLM model re-sync ─────────────────────────────────────────────────────
 
 router.post("/sync-models", async (req: AuthRequest, res) => {
@@ -134,7 +132,6 @@ router.post("/sync-models", async (req: AuthRequest, res) => {
     res.status(503).json({ error: "LiteLLM is not configured" });
     return;
   }
-  // Run in background and respond immediately so the HTTP request doesn't hang
   syncModelsToLiteLLM().catch((err) =>
     req.log.error({ err }, "Manual model sync failed"),
   );
@@ -150,7 +147,6 @@ router.get("/stats", (_req, res) => {
   const activeModels = (db.prepare("SELECT COUNT(*) as c FROM models WHERE enabled = 1").get() as any).c;
   const activeProviders = (db.prepare("SELECT COUNT(*) as c FROM providers WHERE is_active = 1").get() as any).c;
 
-  // Last 14 days spend
   const spendByDay = db.prepare(`
     SELECT 
       date(timestamp) as date,
@@ -162,7 +158,6 @@ router.get("/stats", (_req, res) => {
     ORDER BY date ASC
   `).all() as any[];
 
-  // Fill missing days
   const days: { date: string; spend: number; requests: number }[] = [];
   for (let i = 13; i >= 0; i--) {
     const d = new Date();
@@ -172,7 +167,6 @@ router.get("/stats", (_req, res) => {
     days.push({ date: dateStr, spend: found?.spend ?? 0, requests: Number(found?.requests ?? 0) });
   }
 
-  // Top users by spend
   const topUsers = db.prepare(`
     SELECT 
       u.id as user_id,
@@ -208,11 +202,7 @@ router.get("/stats", (_req, res) => {
 // GET /api/admin/activity
 router.get("/activity", (_req, res) => {
   const records = db
-    .prepare(`
-      SELECT * FROM activity_log
-      ORDER BY timestamp DESC
-      LIMIT 50
-    `)
+    .prepare(`SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 50`)
     .all() as any[];
 
   res.json(
@@ -280,7 +270,7 @@ router.get("/requests", (req: AuthRequest, res) => {
   }
 });
 
-// GET /api/admin/model-utilization — system-wide model breakdown
+// GET /api/admin/model-utilization
 router.get("/model-utilization", (_req, res) => {
   const rows = db.prepare(`
     SELECT
@@ -356,12 +346,6 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
   const updates: string[] = [];
   const params: any[] = [];
 
-  // Setting qredits here means "set the remaining balance to this value". The
-  // ceiling we sync to LiteLLM (credit_limit / max_budget) must then be the
-  // already-spent amount plus this new balance, so LiteLLM's cumulative-spend
-  // enforcement lines up with what the user sees. Syncing the raw balance as
-  // max_budget (the old behaviour) let cumulative spend cross the shrinking
-  // budget and blocked users while their balance was still positive.
   let newCreditLimit: number | null = null;
   if (qredits != null) {
     newCreditLimit = userTotalSpend(String(userId)) + qredits;
@@ -372,7 +356,6 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
     updates.push("is_active = ?");
     params.push(isActive ? 1 : 0);
   }
-  // Validate allowedModels shape: must be null or an array of strings.
   if (allowedModels !== undefined && allowedModels !== null) {
     if (!Array.isArray(allowedModels) || allowedModels.some((m: any) => typeof m !== "string")) {
       res.status(400).json({ error: "allowedModels must be null or an array of strings" });
@@ -380,9 +363,6 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
     }
   }
 
-  // Resolve model identifiers to display names before storing/syncing.
-  // LiteLLM's registry keys on models.name (display name), so the allowlist
-  // must use those same values — not litellm_model (target) strings.
   const resolvedModels = allowedModels !== undefined
     ? resolveModelNames(allowedModels)
     : undefined;
@@ -406,15 +386,10 @@ router.patch("/users/:userId", async (req: AuthRequest, res) => {
     db.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`).run(...params);
   }
 
-  // Sync to LiteLLM
   if (isLiteLLMAvailable() && (qredits != null || resolvedModels !== undefined)) {
     litellmUpdateUser({
       userId: String(userId),
-      // Only push the budget when it actually changed; send the derived ceiling,
-      // never the raw remaining balance.
       ...(newCreditLimit != null ? { maxBudget: newCreditLimit } : {}),
-      // Only push models when they actually changed (litellmUpdateUser omits
-      // unset fields, so a budget-only update leaves the allowlist untouched).
       ...(resolvedModels !== undefined ? { allowedModels: resolvedModels } : {}),
     }).catch((err: any) => req.log.warn({ err }, "LiteLLM user update failed"));
   }
@@ -460,10 +435,6 @@ router.post("/users/:userId/credits", async (req: AuthRequest, res) => {
       return;
   }
 
-  // The ceiling synced to LiteLLM is spend-so-far + the new remaining balance,
-  // NOT the remaining balance itself. LiteLLM enforces against its cumulative
-  // spend, so max_budget must sit above that by exactly the balance we want the
-  // user to still have.
   const newCreditLimit = userTotalSpend(String(userId)) + newQredits;
 
   db.prepare("UPDATE users SET qredits = ?, credit_limit = ?, updated_at = datetime('now') WHERE id = ?")
@@ -475,7 +446,6 @@ router.post("/users/:userId/credits", async (req: AuthRequest, res) => {
     );
   }
 
-  // Log activity
   db.prepare(`
     INSERT INTO activity_log (id, type, user_id, user_email, timestamp)
     VALUES (?, 'credit_update', ?, ?, datetime('now'))
@@ -490,7 +460,7 @@ router.post("/users/:userId/credits", async (req: AuthRequest, res) => {
   res.json(formatAdminUser(updated));
 });
 
-// ── Provider connection test (no existing provider required) ──────────────────
+// ── Provider connection test ──────────────────────────────────────────────────
 
 router.post("/providers/test-connection", async (req: AuthRequest, res) => {
   const { type, baseUrl, apiKey } = req.body;
@@ -523,41 +493,83 @@ router.get("/providers", (_req, res) => {
   const providers = db.prepare("SELECT * FROM providers ORDER BY created_at DESC").all() as any[];
 
   const result = providers.map((p: any) => {
-    const keys = db.prepare("SELECT * FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC").all(p.id) as any[];
     const modelCount = (db.prepare("SELECT COUNT(*) as c FROM models WHERE provider_id = ?").get(p.id) as any).c;
-    return formatProvider(p, keys, Number(modelCount));
+    return formatProvider(p, Number(modelCount));
   });
 
   res.json(result);
 });
 
+/**
+ * POST /api/admin/providers
+ *
+ * Body: {
+ *   name, type, loadBalancing,
+ *   baseUrls: [{ url, priority, keys: [{ key, label, priority }] }],
+ *   models: [...]   // optional — auto-created models from connection test
+ * }
+ */
 router.post("/providers", async (req: AuthRequest, res) => {
-  const { name, type, baseUrl, loadBalancing, apiKeys, models } = req.body;
+  const { name, type, loadBalancing, baseUrls, models } = req.body;
 
   if (!name || !type || !loadBalancing) {
     res.status(400).json({ error: "name, type, and loadBalancing are required" });
     return;
   }
+  if (!Array.isArray(baseUrls) || baseUrls.length === 0) {
+    res.status(400).json({ error: "baseUrls must be a non-empty array" });
+    return;
+  }
 
-  const id = uuidv4();
+  // Validate all base URLs for custom providers
+  for (const bu of baseUrls) {
+    if (type === "custom" && !bu.url) {
+      res.status(400).json({ error: "url is required for each base URL entry in custom providers" });
+      return;
+    }
+    if (bu.url) {
+      const check = validateProviderUrl(bu.url);
+      if (!check.ok) {
+        res.status(400).json({ error: `Invalid provider URL "${bu.url}": ${check.reason}` });
+        return;
+      }
+    }
+  }
+
+  const providerId = uuidv4();
+
+  // Derive a legacy base_url (first entry) for backward compat columns
+  const legacyBaseUrl = baseUrls[0]?.url ?? null;
+
   db.prepare(`
     INSERT INTO providers (id, name, type, base_url, load_balancing, is_active)
     VALUES (?, ?, ?, ?, ?, 1)
-  `).run(id, name, type, baseUrl ?? null, loadBalancing);
+  `).run(providerId, name, type, legacyBaseUrl, loadBalancing);
 
-  // Insert API keys (encrypted at rest)
-  if (Array.isArray(apiKeys)) {
-    for (const k of apiKeys) {
+  // Insert base URLs and their keys
+  const firstBuPrimaryKey: string | undefined = (() => {
+    let first: string | undefined;
+    for (const bu of baseUrls) {
+      const buId = uuidv4();
       db.prepare(`
-        INSERT INTO provider_api_keys (id, provider_id, key_value, label, priority, fail_count)
-        VALUES (?, ?, ?, ?, ?, 0)
-      `).run(uuidv4(), id, encryptSecret(k.key), k.label ?? null, k.priority ?? 0);
-    }
-  }
-  const primaryKeyRaw = (db.prepare("SELECT key_value FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1").get(id) as any)?.key_value;
-  const primaryKey = primaryKeyRaw ? decryptSecret(primaryKeyRaw) : undefined;
+        INSERT INTO provider_base_urls (id, provider_id, url, priority)
+        VALUES (?, ?, ?, ?)
+      `).run(buId, providerId, bu.url ?? null, bu.priority ?? 0);
 
-  // Auto-create selected models
+      if (Array.isArray(bu.keys)) {
+        for (const k of bu.keys) {
+          db.prepare(`
+            INSERT INTO provider_api_keys (id, provider_id, base_url_id, key_value, label, priority, fail_count)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+          `).run(uuidv4(), providerId, buId, encryptSecret(k.key), k.label ?? null, k.priority ?? 0);
+          if (first === undefined) first = k.key; // plain key (not encrypted) for LiteLLM
+        }
+      }
+    }
+    return first;
+  })();
+
+  // Auto-create selected models and register all deployments in LiteLLM
   if (Array.isArray(models) && models.length > 0) {
     for (const m of models) {
       if (!m.id) continue;
@@ -566,39 +578,35 @@ router.post("/providers", async (req: AuthRequest, res) => {
         INSERT INTO models (id, name, litellm_model, provider_id, context_window, input_cost_per_mtok, output_cost_per_mtok, enabled)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1)
       `).run(
-        modelId,
-        m.id,
-        m.id,
-        id,
+        modelId, m.id, m.id, providerId,
         m.contextWindow ?? 4096,
         m.inputCostPerMtok ?? 0,
         m.outputCostPerMtok ?? 0,
       );
 
       if (isLiteLLMAvailable()) {
-        litellmAddModel({
-          modelName: m.id,
-          litellmParams: {
-            model: litellmModelString(m.id, type),
-            apiBase: baseUrl ?? undefined,
-            apiKey: primaryKey,
-            inputCostPerToken: m.inputCostPerMtok != null ? m.inputCostPerMtok / 1_000_000 : undefined,
-            outputCostPerToken: m.outputCostPerMtok != null ? m.outputCostPerMtok / 1_000_000 : undefined,
-          },
-        }).catch((err: any) => req.log?.warn({ err, model: m.id }, "LiteLLM model add failed"));
+        // Register one LiteLLM deployment per (base_url, key) for this model
+        await registerModelDeployments(
+          { name: m.id, litellm_model: m.id, type, input_cost_per_mtok: m.inputCostPerMtok ?? 0, output_cost_per_mtok: m.outputCostPerMtok ?? 0 },
+          baseUrls,
+          req,
+        );
       }
     }
   }
 
-  const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(id) as any;
-  const keys = db.prepare("SELECT * FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC").all(id) as any[];
-  const modelCount = (db.prepare("SELECT COUNT(*) as c FROM models WHERE provider_id = ?").get(id) as any).c;
-  res.status(201).json(formatProvider(provider, keys, Number(modelCount)));
+  const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(providerId) as any;
+  const modelCount = (db.prepare("SELECT COUNT(*) as c FROM models WHERE provider_id = ?").get(providerId) as any).c;
+  res.status(201).json(formatProvider(provider, Number(modelCount)));
 });
 
+/**
+ * PUT /api/admin/providers/:providerId
+ * Replaces the provider's base URLs and keys entirely.
+ */
 router.put("/providers/:providerId", (req, res) => {
   const { providerId } = req.params;
-  const { name, type, baseUrl, loadBalancing, apiKeys } = req.body;
+  const { name, type, loadBalancing, baseUrls } = req.body;
 
   const existing = db.prepare("SELECT * FROM providers WHERE id = ?").get(providerId);
   if (!existing) {
@@ -606,26 +614,57 @@ router.put("/providers/:providerId", (req, res) => {
     return;
   }
 
+  if (Array.isArray(baseUrls)) {
+    for (const bu of baseUrls) {
+      if (type === "custom" && !bu.url) {
+        res.status(400).json({ error: "url is required for each base URL entry in custom providers" });
+        return;
+      }
+      if (bu.url) {
+        const check = validateProviderUrl(bu.url);
+        if (!check.ok) {
+          res.status(400).json({ error: `Invalid provider URL "${bu.url}": ${check.reason}` });
+          return;
+        }
+      }
+    }
+  }
+
+  const legacyBaseUrl = Array.isArray(baseUrls) && baseUrls.length > 0
+    ? (baseUrls[0]?.url ?? null)
+    : (existing as any).base_url;
+
   db.prepare(`
     UPDATE providers SET name = ?, type = ?, base_url = ?, load_balancing = ?, updated_at = datetime('now')
     WHERE id = ?
-  `).run(name, type, baseUrl ?? null, loadBalancing, providerId);
+  `).run(name, type, legacyBaseUrl, loadBalancing, providerId);
 
-  // Replace API keys if provided (encrypted at rest)
-  if (Array.isArray(apiKeys)) {
-    db.prepare("DELETE FROM provider_api_keys WHERE provider_id = ?").run(providerId);
-    for (const k of apiKeys) {
+  // Replace all base URLs and keys if provided
+  if (Array.isArray(baseUrls)) {
+    // Cascade delete handled by FK — deleting provider_base_urls removes their keys
+    db.prepare("DELETE FROM provider_base_urls WHERE provider_id = ?").run(providerId);
+
+    for (const bu of baseUrls) {
+      const buId = uuidv4();
       db.prepare(`
-        INSERT INTO provider_api_keys (id, provider_id, key_value, label, priority, fail_count)
-        VALUES (?, ?, ?, ?, ?, 0)
-      `).run(uuidv4(), providerId, encryptSecret(k.key), k.label ?? null, k.priority ?? 0);
+        INSERT INTO provider_base_urls (id, provider_id, url, priority)
+        VALUES (?, ?, ?, ?)
+      `).run(buId, providerId, bu.url ?? null, bu.priority ?? 0);
+
+      if (Array.isArray(bu.keys)) {
+        for (const k of bu.keys) {
+          db.prepare(`
+            INSERT INTO provider_api_keys (id, provider_id, base_url_id, key_value, label, priority, fail_count)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+          `).run(uuidv4(), providerId, buId, encryptSecret(k.key), k.label ?? null, k.priority ?? 0);
+        }
+      }
     }
   }
 
   const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(providerId) as any;
-  const keys = db.prepare("SELECT * FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC").all(providerId) as any[];
   const modelCount = (db.prepare("SELECT COUNT(*) as c FROM models WHERE provider_id = ?").get(providerId) as any).c;
-  res.json(formatProvider(provider, keys, Number(modelCount)));
+  res.json(formatProvider(provider, Number(modelCount)));
 });
 
 router.delete("/providers/:providerId", (_req, res) => {
@@ -639,7 +678,7 @@ router.delete("/providers/:providerId", (_req, res) => {
   res.json({ message: "Provider deleted" });
 });
 
-// Validate that a URL is safe to fetch (no SSRF: must be public HTTP/HTTPS, no private ranges)
+// Validate that a URL is safe to fetch (no SSRF)
 function validateProviderUrl(rawUrl: string): { ok: true; url: URL } | { ok: false; reason: string } {
   let parsed: URL;
   try {
@@ -651,7 +690,6 @@ function validateProviderUrl(rawUrl: string): { ok: true; url: URL } | { ok: fal
     return { ok: false, reason: "Only http and https URLs are allowed" };
   }
   const host = parsed.hostname.toLowerCase();
-  // Block private/link-local/loopback ranges
   const privatePatterns = [
     /^localhost$/,
     /^127\./,
@@ -672,6 +710,33 @@ function validateProviderUrl(rawUrl: string): { ok: true; url: URL } | { ok: fal
   return { ok: true, url: parsed };
 }
 
+/**
+ * Register all (base_url, key) deployments for a model in LiteLLM.
+ * LiteLLM treats entries with the same model_name as a pool and
+ * load-balances/fails-over across them automatically.
+ */
+async function registerModelDeployments(
+  model: { name: string; litellm_model: string; type: string; input_cost_per_mtok: number; output_cost_per_mtok: number },
+  baseUrls: Array<{ url?: string | null; priority?: number; keys: Array<{ key: string }> }>,
+  req: AuthRequest,
+) {
+  for (const bu of baseUrls) {
+    for (const k of bu.keys ?? []) {
+      if (!k.key) continue;
+      litellmAddModel({
+        modelName: model.name,
+        litellmParams: {
+          model: litellmModelString(model.litellm_model, model.type),
+          apiBase: bu.url ?? undefined,
+          apiKey: k.key,
+          inputCostPerToken: model.input_cost_per_mtok != null ? model.input_cost_per_mtok / 1_000_000 : undefined,
+          outputCostPerToken: model.output_cost_per_mtok != null ? model.output_cost_per_mtok / 1_000_000 : undefined,
+        },
+      }).catch((err: any) => req.log?.warn({ err, model: model.name }, "LiteLLM model add failed"));
+    }
+  }
+}
+
 // POST /api/admin/providers/:providerId/fetch-models
 router.post("/providers/:providerId/fetch-models", async (req: AuthRequest, res) => {
   const { providerId } = req.params;
@@ -688,7 +753,6 @@ router.post("/providers/:providerId/fetch-models", async (req: AuthRequest, res)
     return;
   }
 
-  // Resolve which base URL to use — for custom providers, validate it
   const resolvedBaseUrl: string | undefined = baseUrl ?? provider.base_url ?? undefined;
   if (provider.type === "custom" && resolvedBaseUrl) {
     const check = validateProviderUrl(resolvedBaseUrl);
@@ -746,21 +810,24 @@ router.post("/models", async (req: AuthRequest, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, name, litellmModel, providerId, contextWindow ?? 4096, inputCostPerMtok ?? 0, outputCostPerMtok ?? 0, isEnabled);
 
-  // Sync to LiteLLM
+  // Sync all (base_url, key) deployments to LiteLLM
   if (isLiteLLMAvailable() && isEnabled) {
-    const keys = db.prepare("SELECT * FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1").all(providerId) as any[];
-    const primaryKey = keys[0]?.key_value ? decryptSecret(keys[0].key_value) : undefined;
-
-    litellmAddModel({
-      modelName: name,
-      litellmParams: {
-        model: litellmModelString(litellmModel, provider.type),
-        apiBase: provider.base_url ?? undefined,
-        apiKey: primaryKey,
-        inputCostPerToken: inputCostPerMtok != null ? inputCostPerMtok / 1_000_000 : undefined,
-        outputCostPerToken: outputCostPerMtok != null ? outputCostPerMtok / 1_000_000 : undefined,
-      },
-    }).catch((err: any) => req.log.warn({ err }, "LiteLLM model add failed"));
+    const baseUrlRows = db.prepare("SELECT * FROM provider_base_urls WHERE provider_id = ? ORDER BY priority ASC").all(providerId) as any[];
+    for (const bu of baseUrlRows) {
+      const keys = db.prepare("SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC").all(bu.id) as any[];
+      for (const k of keys) {
+        litellmAddModel({
+          modelName: name,
+          litellmParams: {
+            model: litellmModelString(litellmModel, provider.type),
+            apiBase: bu.url ?? undefined,
+            apiKey: k.key_value ? decryptSecret(k.key_value) : undefined,
+            inputCostPerToken: inputCostPerMtok != null ? inputCostPerMtok / 1_000_000 : undefined,
+            outputCostPerToken: outputCostPerMtok != null ? outputCostPerMtok / 1_000_000 : undefined,
+          },
+        }).catch((err: any) => req.log.warn({ err }, "LiteLLM model add failed"));
+      }
+    }
   }
 
   const model = db.prepare(`
@@ -782,7 +849,6 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
 
   const isEnabled = enabled !== false ? 1 : 0;
 
-  // Resolved final values (what will be written to DB)
   const newName         = name          ?? existing.name;
   const newLitellmModel = litellmModel  ?? existing.litellm_model;
   const newProviderId   = providerId    ?? existing.provider_id;
@@ -801,31 +867,49 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
     SELECT m.*, p.name as provider_name FROM models m LEFT JOIN providers p ON m.provider_id = p.id WHERE m.id = ?
   `).get(modelId) as any;
 
-  // Sync pricing/config changes to LiteLLM.
-  // Use the OLD name to find the existing LiteLLM entry (handles renames),
-  // then delete it and re-add with the new params if still enabled.
+  // Sync to LiteLLM: delete old entry, then re-add all deployments if enabled
   if (isLiteLLMAvailable()) {
     const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(newProviderId) as any;
-    const keys = db.prepare(
-      "SELECT key_value FROM provider_api_keys WHERE provider_id = ? ORDER BY priority ASC LIMIT 1"
-    ).all(newProviderId) as any[];
 
     try {
-      await litellmSyncModelUpdate(
-        existing.name,  // old name — used to locate the entry in LiteLLM
-        isEnabled && provider
-          ? {
-              modelName: newName,
-              litellmParams: {
-                model: litellmModelString(newLitellmModel, provider.type),
-                apiBase: provider.base_url ?? undefined,
-                apiKey: keys[0]?.key_value ? decryptSecret(keys[0].key_value) : undefined,
-                inputCostPerToken: newInputCost != null ? newInputCost / 1_000_000 : undefined,
-                outputCostPerToken: newOutputCost != null ? newOutputCost / 1_000_000 : undefined,
-              },
+      if (!isEnabled || !provider) {
+        // Disabled or orphaned: just delete from LiteLLM
+        await litellmSyncModelUpdate(existing.name, null);
+      } else {
+        // Build the new deployment list
+        const baseUrlRows = db.prepare(
+          "SELECT * FROM provider_base_urls WHERE provider_id = ? ORDER BY priority ASC"
+        ).all(newProviderId) as any[];
+
+        // For each (base_url, key) pair, we delete-then-re-add.
+        // We only need to do the delete once (using the old name to find the entry).
+        // Then add all new deployments.
+        const info = await litellmListModels() as any;
+        const entries = (info.data ?? []).filter((m: any) => m.model_name === existing.name);
+        for (const entry of entries) {
+          await litellmDeleteModel(entry.model_info.id).catch(() => {});
+        }
+
+        if (isEnabled) {
+          for (const bu of baseUrlRows) {
+            const keys = db.prepare(
+              "SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC"
+            ).all(bu.id) as any[];
+            for (const k of keys) {
+              await litellmAddModel({
+                modelName: newName,
+                litellmParams: {
+                  model: litellmModelString(newLitellmModel, provider.type),
+                  apiBase: bu.url ?? undefined,
+                  apiKey: k.key_value ? decryptSecret(k.key_value) : undefined,
+                  inputCostPerToken: newInputCost != null ? newInputCost / 1_000_000 : undefined,
+                  outputCostPerToken: newOutputCost != null ? newOutputCost / 1_000_000 : undefined,
+                },
+              }).catch((err: any) => req.log.warn({ err }, "LiteLLM deployment add failed"));
             }
-          : null, // null = delete only (disabled model)
-      );
+          }
+        }
+      }
     } catch (err: any) {
       req.log.warn({ err }, "LiteLLM model sync failed — DB updated but LiteLLM may be out of sync; will repair on next restart");
     }

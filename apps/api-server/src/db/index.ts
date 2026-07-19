@@ -52,9 +52,18 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS provider_base_urls (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    url TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS provider_api_keys (
     id TEXT PRIMARY KEY,
     provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    base_url_id TEXT REFERENCES provider_base_urls(id) ON DELETE CASCADE,
     key_value TEXT NOT NULL,
     label TEXT,
     priority INTEGER NOT NULL DEFAULT 0,
@@ -101,8 +110,6 @@ db.exec(`
 `);
 
 // Migrate: add latency_ms to activity_log for existing databases.
-// Runs after CREATE TABLE so fresh DBs already have the column and the
-// ALTER silently fails; existing DBs without the column get it added.
 try {
   db.exec("ALTER TABLE activity_log ADD COLUMN latency_ms INTEGER");
 } catch {
@@ -110,19 +117,6 @@ try {
 }
 
 // Migrate: add credit_limit to users for existing databases.
-//
-// `credit_limit` is the CEILING on cumulative spend and is what we sync to
-// LiteLLM as `max_budget`. It only changes when an admin grants/revokes credit
-// — never as the user spends. `qredits` remains the *remaining balance* shown
-// to users (credit_limit − cumulative spend). The invariant we maintain is:
-//
-//     credit_limit = cumulative_spend + qredits
-//
-// The back-fill below reconstructs the ceiling for pre-migration users from
-// their remaining balance plus everything they've already spent. This is the
-// value that must reach LiteLLM: previously `max_budget` was set to the
-// shrinking `qredits`, which LiteLLM's ever-growing cumulative spend would
-// eventually cross, blocking users while their balance still showed positive.
 try {
   db.exec("ALTER TABLE users ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0");
   db.exec(`
@@ -134,20 +128,35 @@ try {
   `);
   console.info("[DB] Migrated users.credit_limit (back-filled from qredits + spend)");
 } catch {
-  // Column already exists on fresh databases (added in CREATE TABLE above).
+  // Column already exists on fresh databases.
+}
+
+// Migrate: add base_url_id to provider_api_keys and backfill provider_base_urls.
+// This introduces the multi-base-URL (cluster) feature. Each existing provider
+// gets a single provider_base_urls row mirroring its legacy base_url, and every
+// existing key is linked to that row via base_url_id.
+try {
+  db.exec("ALTER TABLE provider_api_keys ADD COLUMN base_url_id TEXT REFERENCES provider_base_urls(id) ON DELETE CASCADE");
+
+  // Backfill: create one provider_base_urls row per existing provider
+  const existingProviders = db.prepare("SELECT id, base_url FROM providers").all() as any[];
+  for (const p of existingProviders) {
+    const buId = uuidv4();
+    db.prepare(
+      "INSERT OR IGNORE INTO provider_base_urls (id, provider_id, url, priority) VALUES (?, ?, ?, 0)"
+    ).run(buId, p.id, p.base_url ?? null);
+    db.prepare(
+      "UPDATE provider_api_keys SET base_url_id = ? WHERE provider_id = ? AND base_url_id IS NULL"
+    ).run(buId, p.id);
+  }
+
+  console.info("[DB] Migrated provider_base_urls and base_url_id");
+} catch {
+  // Column already exists — migration already ran on a previous startup.
 }
 
 /**
  * Seed (or update) the admin account on every startup.
- *
- * The environment is the source of truth for admin credentials:
- *   ADMIN_EMAIL    — admin email address  (required; default: <username>@qillin.local)
- *   ADMIN_USERNAME — admin display name   (optional; default: Eruu)
- *   ADMIN_PASSWORD — admin password       (required; skip seed if missing)
- *
- * If an admin already exists, their email, name, and password are updated to
- * match the current environment variables so you can rotate credentials by
- * changing the secrets without touching the database.
  */
 function seedAdmin() {
   const adminUsername = process.env.ADMIN_USERNAME ?? "Eruu";
@@ -174,12 +183,6 @@ function seedAdmin() {
     `).run(id, adminEmail, adminUsername, hash);
     console.info(`[DB] Admin user created: ${adminEmail}`);
   } else {
-    // Update email, name, and password from environment on every startup.
-    // This allows credential rotation without touching the database.
-    //
-    // Guard against UNIQUE email collision: if another (non-admin) user already
-    // holds the target email, skip the update and log a warning so the operator
-    // knows they need to resolve the conflict rather than crashing on startup.
     const collision = db
       .prepare("SELECT id FROM users WHERE email = ? AND id != ?")
       .get(adminEmail, existing.id);

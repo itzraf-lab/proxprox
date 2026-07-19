@@ -10,10 +10,13 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Server, Plus, Trash2, KeyRound, Workflow, Zap, CheckSquare, Square, Database, DollarSign } from "lucide-react"
+import {
+  Server, Plus, Trash2, KeyRound, Workflow, Zap, CheckSquare, Square,
+  Database, DollarSign, Link, ChevronDown, ChevronRight, AlertTriangle, Globe
+} from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
-import { ProviderInputType, ProviderInputLoadBalancing, ProviderApiKeyInput } from "@workspace/api-client-react"
+import { ProviderInputType, ProviderInputLoadBalancing } from "@workspace/api-client-react"
 import { getToken } from "@/lib/api"
 
 interface FetchedModelInfo {
@@ -23,6 +26,20 @@ interface FetchedModelInfo {
   inputCostPerMtok: number | null
   outputCostPerMtok: number | null
   metaSource: "known" | "provider" | "unknown"
+}
+
+/** One API key entry within a base URL */
+interface KeyEntry {
+  key: string
+  label: string
+  priority: number
+}
+
+/** One base URL entry within the cluster */
+interface BaseUrlEntry {
+  url: string       // empty string = use provider-type default
+  priority: number
+  keys: KeyEntry[]
 }
 
 function fmtCtx(n: number | null): string {
@@ -36,6 +53,10 @@ function fmtPrice(n: number | null): string {
   if (n == null) return "—"
   if (n === 0) return "free"
   return `$${n % 1 === 0 ? n.toFixed(2) : n.toString()}`
+}
+
+function defaultBaseUrlEntry(priority = 1): BaseUrlEntry {
+  return { url: "", priority, keys: [{ key: "", label: "", priority: 1 }] }
 }
 
 export default function AdminProviders() {
@@ -73,7 +94,9 @@ function AdminProvidersContent() {
             <Server className="h-6 w-6 md:h-8 md:w-8" />
             Providers
           </h1>
-          <p className="text-muted-foreground font-mono text-xs mt-1 uppercase tracking-wider hidden sm:block">Configure API endpoints and load balancing</p>
+          <p className="text-muted-foreground font-mono text-xs mt-1 uppercase tracking-wider hidden sm:block">
+            Configure API clusters with multiple endpoints and keys
+          </p>
         </div>
         <AddProviderDialog />
       </div>
@@ -99,11 +122,11 @@ function AdminProvidersContent() {
                     <Badge variant="outline" className="rounded-none font-mono text-[10px] uppercase border-primary text-primary">
                       {provider.type}
                     </Badge>
+                    <Badge variant="secondary" className="rounded-none font-mono text-[10px] uppercase">
+                      {provider.baseUrls.length} endpoint{provider.baseUrls.length !== 1 ? 's' : ''}
+                    </Badge>
                   </div>
                   <CardTitle className="text-lg md:text-xl font-mono uppercase tracking-wider truncate">{provider.name}</CardTitle>
-                  {provider.baseUrl && (
-                    <CardDescription className="font-mono text-xs mt-1 truncate">BASE: {provider.baseUrl}</CardDescription>
-                  )}
                 </div>
                 <Button
                   variant="ghost" size="icon"
@@ -114,26 +137,44 @@ function AdminProvidersContent() {
                 </Button>
               </CardHeader>
               <CardContent className="p-0 bg-sidebar/20 flex flex-col sm:flex-row">
+                {/* Cluster endpoint hierarchy */}
                 <div className="flex-1 p-4 md:p-6 border-b sm:border-b-0 sm:border-r">
                   <h4 className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
-                    <KeyRound className="h-3 w-3" /> Credentials
+                    <Globe className="h-3 w-3" /> Cluster Endpoints
                   </h4>
-                  <div className="space-y-2">
-                    {provider.apiKeys.map(key => (
-                      <div key={key.id} className="flex items-center justify-between bg-background border p-2 gap-2">
-                        <div className="min-w-0">
-                          <div className="font-mono text-sm font-bold truncate">{key.keyMasked}</div>
-                          {key.label && <div className="font-mono text-[10px] text-muted-foreground uppercase">{key.label}</div>}
+                  <div className="space-y-3">
+                    {provider.baseUrls.map((bu, buIdx) => (
+                      <div key={bu.id} className="border bg-background">
+                        <div className="flex items-center gap-2 p-2 border-b bg-sidebar/10">
+                          <Badge variant="outline" className="rounded-none font-mono text-[9px] shrink-0">
+                            EP{buIdx + 1}
+                          </Badge>
+                          <span className="font-mono text-xs text-muted-foreground truncate flex-1">
+                            {bu.url || <span className="italic opacity-60">default endpoint</span>}
+                          </span>
+                          <span className="font-mono text-[9px] text-muted-foreground shrink-0">P{bu.priority}</span>
                         </div>
-                        <div className="flex items-center gap-2 text-right shrink-0">
-                          {key.failCount > 0 && <span className="text-xs font-mono text-destructive">FAILS: {key.failCount}</span>}
-                          <Badge variant="secondary" className="rounded-none font-mono text-[10px]">P{key.priority}</Badge>
+                        <div className="p-2 space-y-1">
+                          {bu.keys.map(key => (
+                            <div key={key.id} className="flex items-center justify-between gap-2 pl-4 border-l-2 border-primary/20">
+                              <div className="min-w-0 flex items-center gap-2">
+                                <KeyRound className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                                <span className="font-mono text-xs truncate">{key.keyMasked}</span>
+                                {key.label && <span className="font-mono text-[9px] text-muted-foreground uppercase">{key.label}</span>}
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {key.failCount > 0 && <span className="text-[10px] font-mono text-destructive">FAILS:{key.failCount}</span>}
+                                <Badge variant="secondary" className="rounded-none font-mono text-[9px]">P{key.priority}</Badge>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
-                <div className="w-full sm:w-56 md:w-64 p-4 md:p-6 bg-background">
+                {/* Routing + model count */}
+                <div className="w-full sm:w-48 md:w-56 p-4 md:p-6 bg-background">
                   <h4 className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
                     <Workflow className="h-3 w-3" /> Routing
                   </h4>
@@ -156,27 +197,114 @@ function AdminProvidersContent() {
   )
 }
 
+// ── Add Provider Dialog ───────────────────────────────────────────────────────
+
 function AddProviderDialog() {
   const [open, setOpen] = React.useState(false)
-  const [isTesting, setIsTesting] = React.useState(false)
+  const [isTesting, setIsTesting] = React.useState<number | null>(null) // index of bu being tested
   const [isSaving, setIsSaving] = React.useState(false)
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
   const [name, setName] = React.useState("")
   const [type, setType] = React.useState<ProviderInputType>('openai')
-  const [baseUrl, setBaseUrl] = React.useState("")
   const [lb, setLb] = React.useState<ProviderInputLoadBalancing>('round_robin')
-  const [keys, setKeys] = React.useState<ProviderApiKeyInput[]>([{ key: "", priority: 1 }])
+  const [baseUrls, setBaseUrls] = React.useState<BaseUrlEntry[]>([defaultBaseUrlEntry(1)])
+
+  // fetchedModels and selection are per-base-url (indexed by bu index 0 by convention —
+  // all base URLs must expose the same model IDs so we only test/select once)
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModelInfo[] | null>(null)
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [testError, setTestError] = React.useState<string | null>(null)
+  const [expandedBu, setExpandedBu] = React.useState<Set<number>>(new Set([0]))
 
   const reset = () => {
-    setName(""); setType('openai'); setBaseUrl(""); setLb('round_robin')
-    setKeys([{ key: "", priority: 1 }])
+    setName(""); setType('openai'); setLb('round_robin')
+    setBaseUrls([defaultBaseUrlEntry(1)])
     setFetchedModels(null); setSelectedIds(new Set()); setTestError(null)
+    setExpandedBu(new Set([0]))
   }
+
+  // ── Base URL management ───────────────────────────────────────────────────
+
+  const addBaseUrl = () => {
+    const next = [...baseUrls, defaultBaseUrlEntry(baseUrls.length + 1)]
+    setBaseUrls(next)
+    setExpandedBu(prev => new Set([...prev, next.length - 1]))
+  }
+
+  const removeBaseUrl = (idx: number) => {
+    setBaseUrls(baseUrls.filter((_, i) => i !== idx))
+    setExpandedBu(prev => {
+      const next = new Set<number>()
+      prev.forEach(i => { if (i < idx) next.add(i); else if (i > idx) next.add(i - 1) })
+      return next
+    })
+  }
+
+  const updateBaseUrl = (idx: number, field: keyof BaseUrlEntry, value: any) => {
+    const next = [...baseUrls]
+    next[idx] = { ...next[idx], [field]: value }
+    setBaseUrls(next)
+  }
+
+  // ── Key management within a base URL ─────────────────────────────────────
+
+  const addKey = (buIdx: number) => {
+    const next = [...baseUrls]
+    next[buIdx] = {
+      ...next[buIdx],
+      keys: [...next[buIdx].keys, { key: "", label: "", priority: next[buIdx].keys.length + 1 }]
+    }
+    setBaseUrls(next)
+  }
+
+  const updateKey = (buIdx: number, kIdx: number, field: keyof KeyEntry, value: any) => {
+    const next = [...baseUrls]
+    const keys = [...next[buIdx].keys]
+    keys[kIdx] = { ...keys[kIdx], [field]: value }
+    next[buIdx] = { ...next[buIdx], keys }
+    setBaseUrls(next)
+  }
+
+  const removeKey = (buIdx: number, kIdx: number) => {
+    const next = [...baseUrls]
+    next[buIdx] = { ...next[buIdx], keys: next[buIdx].keys.filter((_, i) => i !== kIdx) }
+    setBaseUrls(next)
+  }
+
+  // ── Connection test (uses the first key of the target base URL) ──────────
+
+  const handleFetchModels = async (buIdx: number) => {
+    const bu = baseUrls[buIdx]
+    if (!bu.keys[0]?.key) { toast({ title: "API key required", variant: "destructive" }); return }
+    if (type === 'custom' && !bu.url) { toast({ title: "Base URL required for this endpoint", variant: "destructive" }); return }
+    setIsTesting(buIdx); setFetchedModels(null); setSelectedIds(new Set()); setTestError(null)
+    try {
+      const token = getToken()
+      const res = await fetch('/api/admin/providers/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ type, baseUrl: type === 'custom' ? bu.url : undefined, apiKey: bu.keys[0].key }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setTestError(data?.error ?? 'Connection failed')
+        toast({ title: "Connection failed", variant: "destructive" })
+      } else {
+        setFetchedModels(data)
+        setSelectedIds(new Set(data.map((m: FetchedModelInfo) => m.id)))
+        toast({ title: `Found ${data.length} models` })
+      }
+    } catch (err: any) {
+      setTestError(err.message ?? 'Network error')
+      toast({ title: "Failed to connect", variant: "destructive" })
+    } finally {
+      setIsTesting(null)
+    }
+  }
+
+  // ── Model selection ───────────────────────────────────────────────────────
 
   const toggleModel = (id: string) => {
     setSelectedIds(prev => {
@@ -195,36 +323,23 @@ function AddProviderDialog() {
     )
   }
 
-  const handleFetchModels = async () => {
-    if (!keys[0].key) { toast({ title: "API key required", variant: "destructive" }); return }
-    if (type === 'custom' && !baseUrl) { toast({ title: "Base URL required", variant: "destructive" }); return }
-    setIsTesting(true); setFetchedModels(null); setSelectedIds(new Set()); setTestError(null)
-    try {
-      const token = getToken()
-      const res = await fetch('/api/admin/providers/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ type, baseUrl: type === 'custom' ? baseUrl : undefined, apiKey: keys[0].key }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setTestError(data?.error ?? 'Connection failed')
-        toast({ title: "Connection failed", variant: "destructive" })
-      } else {
-        setFetchedModels(data)
-        setSelectedIds(new Set(data.map((m: FetchedModelInfo) => m.id)))
-      }
-    } catch (err: any) {
-      setTestError(err.message ?? 'Network error')
-      toast({ title: "Failed to connect", variant: "destructive" })
-    } finally {
-      setIsTesting(false)
-    }
-  }
+  const allSelected = fetchedModels != null && selectedIds.size === fetchedModels.length
+
+  // ── Submission ────────────────────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name || keys.some(k => !k.key)) return
+    if (!name) return
+    // Validate: each BU must have at least one key
+    for (const bu of baseUrls) {
+      if (bu.keys.some(k => !k.key.trim())) {
+        toast({ title: "All API key fields must be filled in", variant: "destructive" }); return
+      }
+      if (type === 'custom' && !bu.url.trim()) {
+        toast({ title: "All endpoints must have a URL for custom providers", variant: "destructive" }); return
+      }
+    }
+
     setIsSaving(true)
     try {
       const token = getToken()
@@ -233,9 +348,18 @@ function AddProviderDialog() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
-          name, type, loadBalancing: lb,
-          baseUrl: type === 'custom' ? baseUrl : undefined,
-          apiKeys: keys.filter(k => k.key.trim() !== ''),
+          name,
+          type,
+          loadBalancing: lb,
+          baseUrls: baseUrls.map(bu => ({
+            url: type === 'custom' ? bu.url : null,
+            priority: bu.priority,
+            keys: bu.keys.filter(k => k.key.trim() !== '').map(k => ({
+              key: k.key,
+              label: k.label || undefined,
+              priority: k.priority,
+            })),
+          })),
           models: selectedModels,
         }),
       })
@@ -254,7 +378,9 @@ function AddProviderDialog() {
     }
   }
 
-  const allSelected = fetchedModels != null && selectedIds.size === fetchedModels.length
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  const isCustom = type === 'custom'
 
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
@@ -263,25 +389,29 @@ function AddProviderDialog() {
           <Plus className="mr-1.5 w-4 h-4" /> <span className="hidden sm:inline">Add </span>Provider
         </Button>
       </DialogTrigger>
-      <DialogContent className="w-[calc(100vw-1rem)] max-w-4xl rounded-none border-2 max-h-[92vh] overflow-y-auto p-4 md:p-6">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-5xl rounded-none border-2 max-h-[92vh] overflow-y-auto p-4 md:p-6">
         <form onSubmit={handleSubmit} className="space-y-5">
           <DialogHeader>
-            <DialogTitle className="font-mono uppercase tracking-wider text-lg">Integrate Provider</DialogTitle>
+            <DialogTitle className="font-mono uppercase tracking-wider text-lg">Integrate Provider Cluster</DialogTitle>
           </DialogHeader>
 
-          {/* Responsive: stack on mobile, side-by-side on desktop */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
-            {/* Left — provider config */}
+            {/* Left — cluster config */}
             <div className="space-y-4">
+              {/* Basic settings */}
               <div className="space-y-2">
                 <Label className="font-mono text-xs uppercase tracking-wider">Provider Name</Label>
-                <Input value={name} onChange={e => setName(e.target.value)} required className="rounded-none bg-sidebar/10 font-mono" placeholder="e.g. OpenAI Primary" />
+                <Input value={name} onChange={e => setName(e.target.value)} required
+                  className="rounded-none bg-sidebar/10 font-mono" placeholder="e.g. OpenRouter Cluster" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label className="font-mono text-xs uppercase tracking-wider">Type</Label>
-                  <Select value={type} onValueChange={(v) => { setType(v as ProviderInputType); setFetchedModels(null); setSelectedIds(new Set()) }}>
+                  <Select value={type} onValueChange={(v) => {
+                    setType(v as ProviderInputType)
+                    setFetchedModels(null); setSelectedIds(new Set())
+                  }}>
                     <SelectTrigger className="rounded-none bg-sidebar/10 font-mono text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent className="rounded-none border-2">
                       <SelectItem value="openai" className="font-mono">OpenAI</SelectItem>
@@ -302,52 +432,163 @@ function AddProviderDialog() {
                 </div>
               </div>
 
-              {type === 'custom' && (
-                <div className="space-y-2">
-                  <Label className="font-mono text-xs uppercase tracking-wider">Base URL</Label>
-                  <Input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} required className="rounded-none bg-sidebar/10 font-mono" placeholder="https://api.example.com/v1" />
-                </div>
-              )}
-
+              {/* Cluster endpoints */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="font-mono text-xs uppercase tracking-wider text-primary">API Keys</Label>
-                  <Button type="button" variant="outline" size="sm" className="rounded-none font-mono text-[10px] uppercase h-6 px-2"
-                    onClick={() => setKeys([...keys, { key: "", priority: keys.length + 1 }])}>
-                    <Plus className="w-3 h-3 mr-1" /> Key
+                  <Label className="font-mono text-xs uppercase tracking-wider text-primary flex items-center gap-1.5">
+                    <Globe className="h-3 w-3" /> Cluster Endpoints
+                  </Label>
+                  <Button type="button" variant="outline" size="sm"
+                    className="rounded-none font-mono text-[10px] uppercase h-6 px-2"
+                    onClick={addBaseUrl}>
+                    <Plus className="w-3 h-3 mr-1" /> Endpoint
                   </Button>
                 </div>
-                <div className="space-y-2 max-h-[160px] overflow-y-auto">
-                  {keys.map((k, i) => (
-                    <div key={i} className="flex gap-2 p-2 bg-sidebar/10 border">
-                      <div className="flex-1 space-y-1.5 min-w-0">
-                        <Input type="password" value={k.key} onChange={e => { const nk = [...keys]; nk[i].key = e.target.value; setKeys(nk) }}
-                          placeholder="sk-..." required className="rounded-none h-8 font-mono text-xs" />
-                        <div className="flex gap-2">
-                          <Input value={k.label || ''} onChange={e => { const nk = [...keys]; nk[i].label = e.target.value; setKeys(nk) }}
-                            placeholder="Label (opt)" className="rounded-none h-7 font-mono text-xs w-full" />
-                          {lb === 'priority' && (
-                            <Input type="number" min="1" value={k.priority}
-                              onChange={e => { const nk = [...keys]; nk[i].priority = parseInt(e.target.value) || 1; setKeys(nk) }}
-                              className="rounded-none h-7 font-mono text-xs w-16 shrink-0" placeholder="P" />
+
+                {/* Notice about model ID requirement */}
+                {baseUrls.length > 1 && (
+                  <div className="flex items-start gap-2 p-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                    <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                    <p className="font-mono text-[10px] leading-relaxed">
+                      All endpoints in a cluster must expose the <strong>exact same model IDs</strong>. LiteLLM will load-balance and fail-over across endpoints.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-2 max-h-[340px] overflow-y-auto">
+                  {baseUrls.map((bu, buIdx) => {
+                    const isExpanded = expandedBu.has(buIdx)
+                    return (
+                      <div key={buIdx} className="border bg-background">
+                        {/* Endpoint header */}
+                        <div className="flex items-center gap-2 p-2 bg-sidebar/10 border-b">
+                          <button type="button" onClick={() => {
+                            setExpandedBu(prev => {
+                              const next = new Set(prev)
+                              isExpanded ? next.delete(buIdx) : next.add(buIdx)
+                              return next
+                            })
+                          }} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
+                            {isExpanded
+                              ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                            <Badge variant="outline" className="rounded-none font-mono text-[9px] shrink-0">EP{buIdx + 1}</Badge>
+                            <span className="font-mono text-xs text-muted-foreground truncate">
+                              {bu.url || (isCustom ? "no URL set" : "default endpoint")}
+                            </span>
+                            <span className="font-mono text-[9px] text-muted-foreground shrink-0 ml-auto mr-1">
+                              {bu.keys.length} key{bu.keys.length !== 1 ? 's' : ''}
+                            </span>
+                          </button>
+                          {baseUrls.length > 1 && (
+                            <Button type="button" variant="ghost" size="icon"
+                              className="h-5 w-5 text-destructive rounded-none shrink-0"
+                              onClick={() => removeBaseUrl(buIdx)}>
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
                           )}
                         </div>
+
+                        {isExpanded && (
+                          <div className="p-2 space-y-2">
+                            {/* URL field (custom only) */}
+                            {isCustom && (
+                              <div className="flex gap-2">
+                                <div className="flex-1 space-y-1">
+                                  <Label className="font-mono text-[10px] uppercase text-muted-foreground flex items-center gap-1">
+                                    <Link className="h-2.5 w-2.5" /> Base URL
+                                  </Label>
+                                  <Input
+                                    value={bu.url}
+                                    onChange={e => updateBaseUrl(buIdx, 'url', e.target.value)}
+                                    placeholder="https://api.example.com/v1"
+                                    className="rounded-none h-7 font-mono text-xs"
+                                    required={isCustom}
+                                  />
+                                </div>
+                                {lb === 'priority' && (
+                                  <div className="w-16 space-y-1">
+                                    <Label className="font-mono text-[10px] uppercase text-muted-foreground">Priority</Label>
+                                    <Input type="number" min="1" value={bu.priority}
+                                      onChange={e => updateBaseUrl(buIdx, 'priority', parseInt(e.target.value) || 1)}
+                                      className="rounded-none h-7 font-mono text-xs" />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Keys within this endpoint */}
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <Label className="font-mono text-[10px] uppercase text-muted-foreground flex items-center gap-1">
+                                  <KeyRound className="h-2.5 w-2.5" /> API Keys
+                                </Label>
+                                <button type="button"
+                                  className="font-mono text-[9px] uppercase text-primary hover:underline flex items-center gap-0.5"
+                                  onClick={() => addKey(buIdx)}>
+                                  <Plus className="w-2.5 h-2.5" /> Key
+                                </button>
+                              </div>
+                              {bu.keys.map((k, kIdx) => (
+                                <div key={kIdx} className="flex gap-1.5 items-start pl-2 border-l-2 border-primary/20">
+                                  <div className="flex-1 space-y-1 min-w-0">
+                                    <Input
+                                      type="password"
+                                      value={k.key}
+                                      onChange={e => updateKey(buIdx, kIdx, 'key', e.target.value)}
+                                      placeholder="sk-..."
+                                      required
+                                      className="rounded-none h-7 font-mono text-xs"
+                                    />
+                                    <div className="flex gap-1.5">
+                                      <Input
+                                        value={k.label}
+                                        onChange={e => updateKey(buIdx, kIdx, 'label', e.target.value)}
+                                        placeholder="Label (opt)"
+                                        className="rounded-none h-6 font-mono text-[10px] flex-1"
+                                      />
+                                      {lb === 'priority' && (
+                                        <Input
+                                          type="number" min="1" value={k.priority}
+                                          onChange={e => updateKey(buIdx, kIdx, 'priority', parseInt(e.target.value) || 1)}
+                                          className="rounded-none h-6 font-mono text-[10px] w-12 shrink-0"
+                                          placeholder="P"
+                                        />
+                                      )}
+                                    </div>
+                                  </div>
+                                  {bu.keys.length > 1 && (
+                                    <Button type="button" variant="ghost" size="icon"
+                                      className="h-7 w-7 text-destructive rounded-none shrink-0"
+                                      onClick={() => removeKey(buIdx, kIdx)}>
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Test connection for this endpoint */}
+                            <Button
+                              type="button" variant="secondary" size="sm"
+                              className="w-full rounded-none font-mono uppercase text-[10px] h-7"
+                              onClick={() => handleFetchModels(buIdx)}
+                              disabled={isTesting !== null || !bu.keys[0]?.key}
+                            >
+                              {isTesting === buIdx
+                                ? "Connecting..."
+                                : fetchedModels && buIdx === 0
+                                  ? "Re-test & Fetch Models"
+                                  : "Test Connection & Fetch Models"}
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      {keys.length > 1 && (
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive rounded-none shrink-0"
-                          onClick={() => setKeys(keys.filter((_, idx) => idx !== i))}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
 
-              <Button type="button" variant="secondary" className="w-full rounded-none font-mono uppercase text-xs"
-                onClick={handleFetchModels} disabled={isTesting || !keys[0].key}>
-                {isTesting ? "Connecting..." : fetchedModels ? "Re-test Connection" : "Test Connection & Fetch Models"}
-              </Button>
               {testError && (
                 <div className="p-2 bg-destructive/10 border border-destructive/30 text-destructive font-mono text-xs break-all">
                   {testError}
@@ -370,9 +611,16 @@ function AddProviderDialog() {
                 )}
               </div>
 
+              {/* Note about cluster model IDs */}
+              {baseUrls.length > 1 && (
+                <p className="font-mono text-[10px] text-muted-foreground mb-2 border-l-2 border-amber-500/40 pl-2">
+                  Test any one endpoint — all must share the same model IDs.
+                </p>
+              )}
+
               {!fetchedModels ? (
                 <div className="flex-1 flex items-center justify-center border-2 border-dashed p-6 text-center text-muted-foreground font-mono text-xs min-h-[120px]">
-                  Test the connection first to detect models
+                  Test an endpoint to detect available models
                 </div>
               ) : fetchedModels.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center border-2 border-dashed p-6 text-center text-muted-foreground font-mono text-xs min-h-[120px]">
@@ -387,7 +635,7 @@ function AddProviderDialog() {
                       <span className="flex items-center gap-1"><DollarSign className="w-2.5 h-2.5" />In/Out</span>
                     </div>
                   </div>
-                  <div className="flex-1 space-y-1 max-h-[280px] md:max-h-[360px] overflow-y-auto">
+                  <div className="flex-1 space-y-1 max-h-[300px] md:max-h-[380px] overflow-y-auto">
                     {fetchedModels.map(m => (
                       <div
                         key={m.id}
@@ -424,7 +672,9 @@ function AddProviderDialog() {
           </div>
 
           <DialogFooter className="border-t pt-4 flex-col sm:flex-row gap-2">
-            <Button type="button" variant="outline" onClick={() => setOpen(false)} className="rounded-none font-mono uppercase w-full sm:w-auto">Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} className="rounded-none font-mono uppercase w-full sm:w-auto">
+              Cancel
+            </Button>
             <Button type="submit" className="rounded-none font-mono uppercase w-full sm:w-auto" disabled={isSaving || !name}>
               {isSaving ? "Saving..." : `Commit${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
             </Button>

@@ -235,14 +235,22 @@ export interface ProviderApiKey {
   failCount: number;
 }
 
+/** A single base URL entry within a provider cluster, with its own set of API keys */
+export interface ProviderBaseUrl {
+  id: string;
+  /** @nullable — null means use the provider type's default endpoint */
+  url: string | null;
+  priority: number;
+  keys: ProviderApiKey[];
+}
+
 export interface Provider {
   id: string;
   name: string;
   type: ProviderType;
-  /** @nullable */
-  baseUrl?: string | null;
   loadBalancing: ProviderLoadBalancing;
-  apiKeys: ProviderApiKey[];
+  /** Ordered list of base URL entries (cluster endpoints) */
+  baseUrls: ProviderBaseUrl[];
   modelCount: number;
   isActive: boolean;
   createdAt: string;
@@ -253,6 +261,14 @@ export interface ProviderApiKeyInput {
   /** @nullable */
   label?: string | null;
   priority: number;
+}
+
+/** A base URL entry with its keys, used when creating/updating a provider */
+export interface ProviderBaseUrlInput {
+  /** @nullable — null means use the provider type's default endpoint */
+  url?: string | null;
+  priority: number;
+  keys: ProviderApiKeyInput[];
 }
 
 export type ProviderInputType = typeof ProviderInputType[keyof typeof ProviderInputType];
@@ -275,10 +291,9 @@ export const ProviderInputLoadBalancing = {
 export interface ProviderInput {
   name: string;
   type: ProviderInputType;
-  /** @nullable */
-  baseUrl?: string | null;
   loadBalancing: ProviderInputLoadBalancing;
-  apiKeys: ProviderApiKeyInput[];
+  /** Ordered list of base URL entries (cluster endpoints) */
+  baseUrls: ProviderBaseUrlInput[];
 }
 
 export interface FetchModelsInput {
@@ -335,4 +350,3 @@ page?: number;
 limit?: number;
 model?: string;
 };
-
