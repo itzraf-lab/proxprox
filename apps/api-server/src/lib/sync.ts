@@ -62,10 +62,37 @@ interface ModelDeployment {
   input_cost_per_mtok: number;
   output_cost_per_mtok: number;
   type: string;
+  load_balancing: string;
   base_url: string | null;
   url_priority: number;
   key_value: string | null;
   key_priority: number;
+}
+
+/**
+ * Compute the LiteLLM routing weight for one deployment.
+ *
+ * Round-robin providers: every deployment gets weight=1 (equal share).
+ * Priority providers:
+ *   - The lowest-priority tier (smallest url_priority, then smallest
+ *     key_priority within that url) gets weight=1 — these are "active".
+ *   - All other deployments get weight=0 — "standby". LiteLLM's
+ *     simple_shuffle skips weight=0 entries as long as any weight>0
+ *     deployment is healthy; they only activate when the entire active
+ *     tier has failed into cooldown.
+ */
+export function computeDeploymentWeight(params: {
+  loadBalancing: string;
+  urlPriority: number;
+  keyPriority: number;
+  minUrlPriority: number;
+  minKeyPriorityForMinUrl: number;
+}): number {
+  if (params.loadBalancing !== "priority") return 1;
+  const isPrimary =
+    params.urlPriority === params.minUrlPriority &&
+    params.keyPriority === params.minKeyPriorityForMinUrl;
+  return isPrimary ? 1 : 0;
 }
 
 /**
@@ -83,6 +110,7 @@ function getModelDeployments(): ModelDeployment[] {
       m.input_cost_per_mtok,
       m.output_cost_per_mtok,
       p.type,
+      p.load_balancing,
       COALESCE(bu.url, p.base_url) AS base_url,
       COALESCE(bu.priority, 0)    AS url_priority,
       k.key_value,
@@ -137,12 +165,26 @@ export async function syncModelsToLiteLLM(): Promise<void> {
       continue;
     }
 
+    // Compute the primary-tier floor for priority providers:
+    // lowest url_priority, then lowest key_priority within that url.
+    const minUrlPriority = Math.min(...deps.map((d) => d.url_priority));
+    const minKeyPriorityForMinUrl = Math.min(
+      ...deps.filter((d) => d.url_priority === minUrlPriority).map((d) => d.key_priority),
+    );
+
     // Register every (base_url, key) deployment for this model.
     // LiteLLM treats multiple entries with the same model_name as a pool
     // and load-balances / fails-over across them automatically.
     let modelRegistered = false;
     for (const d of deps) {
       if (!d.key_value) continue; // skip if no key
+      const weight = computeDeploymentWeight({
+        loadBalancing: d.load_balancing,
+        urlPriority: d.url_priority,
+        keyPriority: d.key_priority,
+        minUrlPriority,
+        minKeyPriorityForMinUrl,
+      });
       try {
         await litellmAddModel({
           modelName: d.name,
@@ -154,6 +196,7 @@ export async function syncModelsToLiteLLM(): Promise<void> {
               d.input_cost_per_mtok != null ? d.input_cost_per_mtok / 1_000_000 : undefined,
             outputCostPerToken:
               d.output_cost_per_mtok != null ? d.output_cost_per_mtok / 1_000_000 : undefined,
+            weight,
           },
         });
         modelRegistered = true;

@@ -10,7 +10,7 @@ import {
   isLiteLLMAvailable,
   fetchModelsFromProvider,
 } from "../lib/litellm.js";
-import { syncModelsToLiteLLM, litellmModelString } from "../lib/sync.js";
+import { syncModelsToLiteLLM, litellmModelString, computeDeploymentWeight } from "../lib/sync.js";
 import { encryptSecret, decryptSecret } from "../lib/crypto.js";
 
 const router = Router();
@@ -589,6 +589,7 @@ router.post("/providers", async (req: AuthRequest, res) => {
         await registerModelDeployments(
           { name: m.id, litellm_model: m.id, type, input_cost_per_mtok: m.inputCostPerMtok ?? 0, output_cost_per_mtok: m.outputCostPerMtok ?? 0 },
           baseUrls,
+          loadBalancing,
           req,
         );
       }
@@ -714,15 +715,36 @@ function validateProviderUrl(rawUrl: string): { ok: true; url: URL } | { ok: fal
  * Register all (base_url, key) deployments for a model in LiteLLM.
  * LiteLLM treats entries with the same model_name as a pool and
  * load-balances/fails-over across them automatically.
+ *
+ * For priority providers, deployments outside the primary tier receive
+ * weight=0 so they act as standby — only selected by LiteLLM when every
+ * weight>0 deployment for the model is in cooldown (i.e. has failed out).
  */
 async function registerModelDeployments(
   model: { name: string; litellm_model: string; type: string; input_cost_per_mtok: number; output_cost_per_mtok: number },
-  baseUrls: Array<{ url?: string | null; priority?: number; keys: Array<{ key: string }> }>,
+  baseUrls: Array<{ url?: string | null; priority?: number; keys: Array<{ key: string; priority?: number }> }>,
+  loadBalancing: string,
   req: AuthRequest,
 ) {
+  // Compute the primary-tier floor for priority routing.
+  const allPairs = baseUrls.flatMap((bu) =>
+    (bu.keys ?? []).map((k) => ({ urlPriority: bu.priority ?? 1, keyPriority: k.priority ?? 1 })),
+  );
+  const minUrlPriority = allPairs.length ? Math.min(...allPairs.map((p) => p.urlPriority)) : 1;
+  const minKeyPriorityForMinUrl = allPairs.length
+    ? Math.min(...allPairs.filter((p) => p.urlPriority === minUrlPriority).map((p) => p.keyPriority))
+    : 1;
+
   for (const bu of baseUrls) {
     for (const k of bu.keys ?? []) {
       if (!k.key) continue;
+      const weight = computeDeploymentWeight({
+        loadBalancing,
+        urlPriority: bu.priority ?? 1,
+        keyPriority: k.priority ?? 1,
+        minUrlPriority,
+        minKeyPriorityForMinUrl,
+      });
       litellmAddModel({
         modelName: model.name,
         litellmParams: {
@@ -731,6 +753,7 @@ async function registerModelDeployments(
           apiKey: k.key,
           inputCostPerToken: model.input_cost_per_mtok != null ? model.input_cost_per_mtok / 1_000_000 : undefined,
           outputCostPerToken: model.output_cost_per_mtok != null ? model.output_cost_per_mtok / 1_000_000 : undefined,
+          weight,
         },
       }).catch((err: any) => req.log?.warn({ err, model: model.name }, "LiteLLM model add failed"));
     }
@@ -813,9 +836,25 @@ router.post("/models", async (req: AuthRequest, res) => {
   // Sync all (base_url, key) deployments to LiteLLM
   if (isLiteLLMAvailable() && isEnabled) {
     const baseUrlRows = db.prepare("SELECT * FROM provider_base_urls WHERE provider_id = ? ORDER BY priority ASC").all(providerId) as any[];
+    // Compute primary-tier floor for weight assignment
+    const allPairsPost = baseUrlRows.flatMap((bu: any) => {
+      const keys = db.prepare("SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC").all(bu.id) as any[];
+      return keys.map((k: any) => ({ urlPriority: bu.priority ?? 1, keyPriority: k.priority ?? 1 }));
+    });
+    const minUrlPost = allPairsPost.length ? Math.min(...allPairsPost.map((p: any) => p.urlPriority)) : 1;
+    const minKeyPost = allPairsPost.length
+      ? Math.min(...allPairsPost.filter((p: any) => p.urlPriority === minUrlPost).map((p: any) => p.keyPriority))
+      : 1;
     for (const bu of baseUrlRows) {
       const keys = db.prepare("SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC").all(bu.id) as any[];
       for (const k of keys) {
+        const weight = computeDeploymentWeight({
+          loadBalancing: provider.load_balancing,
+          urlPriority: bu.priority ?? 1,
+          keyPriority: k.priority ?? 1,
+          minUrlPriority: minUrlPost,
+          minKeyPriorityForMinUrl: minKeyPost,
+        });
         litellmAddModel({
           modelName: name,
           litellmParams: {
@@ -824,6 +863,7 @@ router.post("/models", async (req: AuthRequest, res) => {
             apiKey: k.key_value ? decryptSecret(k.key_value) : undefined,
             inputCostPerToken: inputCostPerMtok != null ? inputCostPerMtok / 1_000_000 : undefined,
             outputCostPerToken: outputCostPerMtok != null ? outputCostPerMtok / 1_000_000 : undefined,
+            weight,
           },
         }).catch((err: any) => req.log.warn({ err }, "LiteLLM model add failed"));
       }
@@ -891,11 +931,29 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
         }
 
         if (isEnabled) {
+          // Compute primary-tier floor for weight assignment
+          const allPairsPut = baseUrlRows.flatMap((bu: any) => {
+            const keys = db.prepare(
+              "SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC"
+            ).all(bu.id) as any[];
+            return keys.map((k: any) => ({ urlPriority: bu.priority ?? 1, keyPriority: k.priority ?? 1 }));
+          });
+          const minUrlPut = allPairsPut.length ? Math.min(...allPairsPut.map((p: any) => p.urlPriority)) : 1;
+          const minKeyPut = allPairsPut.length
+            ? Math.min(...allPairsPut.filter((p: any) => p.urlPriority === minUrlPut).map((p: any) => p.keyPriority))
+            : 1;
           for (const bu of baseUrlRows) {
             const keys = db.prepare(
               "SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC"
             ).all(bu.id) as any[];
             for (const k of keys) {
+              const weight = computeDeploymentWeight({
+                loadBalancing: provider.load_balancing,
+                urlPriority: bu.priority ?? 1,
+                keyPriority: k.priority ?? 1,
+                minUrlPriority: minUrlPut,
+                minKeyPriorityForMinUrl: minKeyPut,
+              });
               await litellmAddModel({
                 modelName: newName,
                 litellmParams: {
@@ -904,6 +962,7 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
                   apiKey: k.key_value ? decryptSecret(k.key_value) : undefined,
                   inputCostPerToken: newInputCost != null ? newInputCost / 1_000_000 : undefined,
                   outputCostPerToken: newOutputCost != null ? newOutputCost / 1_000_000 : undefined,
+                  weight,
                 },
               }).catch((err: any) => req.log.warn({ err }, "LiteLLM deployment add failed"));
             }

@@ -124,6 +124,14 @@ export async function litellmAddModel(params: {
     apiKey?: string;
     inputCostPerToken?: number;
     outputCostPerToken?: number;
+    /**
+     * Routing weight used by LiteLLM's simple-shuffle strategy.
+     * weight=1  → deployment is part of the active routing pool.
+     * weight=0  → deployment is a standby; only used when ALL weight>0
+     *             deployments for this model are in cooldown (i.e. failed out).
+     * Omitting weight is equivalent to weight=1 (default behaviour).
+     */
+    weight?: number;
   };
 }) {
   return litellmFetch("/model/new", {
@@ -139,6 +147,9 @@ export async function litellmAddModel(params: {
           : {}),
         ...(params.litellmParams.outputCostPerToken != null
           ? { output_cost_per_token: params.litellmParams.outputCostPerToken }
+          : {}),
+        ...(params.litellmParams.weight != null
+          ? { weight: params.litellmParams.weight }
           : {}),
       },
     }),
