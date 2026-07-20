@@ -2,31 +2,21 @@ import * as React from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
 import { useGetAdminProviders, useDeleteAdminProvider, getGetAdminProvidersQueryKey } from "@workspace/api-client-react"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
-  Server, Plus, Trash2, KeyRound, Workflow, Zap, CheckSquare, Square,
-  Database, DollarSign, Link, ChevronDown, ChevronRight, AlertTriangle, Globe
+  Server, Plus, Trash2, KeyRound, Workflow, Zap,
+  ChevronDown, ChevronRight, AlertTriangle, Globe, Link, CheckCircle2, XCircle, Loader2
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { ProviderInputType, ProviderInputLoadBalancing } from "@workspace/api-client-react"
 import { getToken } from "@/lib/api"
-
-interface FetchedModelInfo {
-  id: string
-  name: string
-  contextWindow: number | null
-  inputCostPerMtok: number | null
-  outputCostPerMtok: number | null
-  metaSource: "known" | "provider" | "unknown"
-}
 
 /** One API key entry within a base URL */
 interface KeyEntry {
@@ -37,22 +27,14 @@ interface KeyEntry {
 
 /** One base URL entry within the cluster */
 interface BaseUrlEntry {
-  url: string       // empty string = use provider-type default
+  url: string
   priority: number
   keys: KeyEntry[]
 }
 
-function fmtCtx(n: number | null): string {
-  if (n == null) return "—"
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
-  return String(n)
-}
-
-function fmtPrice(n: number | null): string {
-  if (n == null) return "—"
-  if (n === 0) return "free"
-  return `$${n % 1 === 0 ? n.toFixed(2) : n.toString()}`
+/** One manually-specified model */
+interface ModelEntry {
+  modelId: string
 }
 
 function defaultBaseUrlEntry(priority = 1): BaseUrlEntry {
@@ -201,28 +183,30 @@ function AdminProvidersContent() {
 
 function AddProviderDialog() {
   const [open, setOpen] = React.useState(false)
-  const [isTesting, setIsTesting] = React.useState<number | null>(null) // index of bu being tested
   const [isSaving, setIsSaving] = React.useState(false)
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
+  // Cluster config
   const [name, setName] = React.useState("")
   const [type, setType] = React.useState<ProviderInputType>('openai')
   const [lb, setLb] = React.useState<ProviderInputLoadBalancing>('round_robin')
   const [baseUrls, setBaseUrls] = React.useState<BaseUrlEntry[]>([defaultBaseUrlEntry(1)])
-
-  // fetchedModels and selection are per-base-url (indexed by bu index 0 by convention —
-  // all base URLs must expose the same model IDs so we only test/select once)
-  const [fetchedModels, setFetchedModels] = React.useState<FetchedModelInfo[] | null>(null)
-  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
-  const [testError, setTestError] = React.useState<string | null>(null)
   const [expandedBu, setExpandedBu] = React.useState<Set<number>>(new Set([0]))
+
+  // Per-endpoint test status: 'idle' | 'testing' | 'ok' | 'error'
+  const [testStatus, setTestStatus] = React.useState<Record<number, 'testing' | 'ok' | 'error'>>({})
+  const [testErrors, setTestErrors] = React.useState<Record<number, string>>({})
+
+  // Manual model list
+  const [models, setModels] = React.useState<ModelEntry[]>([{ modelId: '' }])
 
   const reset = () => {
     setName(""); setType('openai'); setLb('round_robin')
     setBaseUrls([defaultBaseUrlEntry(1)])
-    setFetchedModels(null); setSelectedIds(new Set()); setTestError(null)
     setExpandedBu(new Set([0]))
+    setTestStatus({}); setTestErrors({})
+    setModels([{ modelId: '' }])
   }
 
   // ── Base URL management ───────────────────────────────────────────────────
@@ -240,12 +224,26 @@ function AddProviderDialog() {
       prev.forEach(i => { if (i < idx) next.add(i); else if (i > idx) next.add(i - 1) })
       return next
     })
+    setTestStatus(prev => {
+      const next: Record<number, 'testing' | 'ok' | 'error'> = {}
+      Object.entries(prev).forEach(([k, v]) => {
+        const i = parseInt(k)
+        if (i < idx) next[i] = v
+        else if (i > idx) next[i - 1] = v
+      })
+      return next
+    })
   }
 
   const updateBaseUrl = (idx: number, field: keyof BaseUrlEntry, value: any) => {
     const next = [...baseUrls]
     next[idx] = { ...next[idx], [field]: value }
     setBaseUrls(next)
+    // Clear test result when URL changes
+    if (field === 'url') {
+      setTestStatus(prev => { const n = { ...prev }; delete n[idx]; return n })
+      setTestErrors(prev => { const n = { ...prev }; delete n[idx]; return n })
+    }
   }
 
   // ── Key management within a base URL ─────────────────────────────────────
@@ -265,6 +263,11 @@ function AddProviderDialog() {
     keys[kIdx] = { ...keys[kIdx], [field]: value }
     next[buIdx] = { ...next[buIdx], keys }
     setBaseUrls(next)
+    // Clear test result when key changes
+    if (field === 'key') {
+      setTestStatus(prev => { const n = { ...prev }; delete n[buIdx]; return n })
+      setTestErrors(prev => { const n = { ...prev }; delete n[buIdx]; return n })
+    }
   }
 
   const removeKey = (buIdx: number, kIdx: number) => {
@@ -273,13 +276,16 @@ function AddProviderDialog() {
     setBaseUrls(next)
   }
 
-  // ── Connection test (uses the first key of the target base URL) ──────────
+  // ── Connectivity test (no model fetching) ─────────────────────────────────
 
-  const handleFetchModels = async (buIdx: number) => {
+  const handleTestConnection = async (buIdx: number) => {
     const bu = baseUrls[buIdx]
-    if (!bu.keys[0]?.key) { toast({ title: "API key required", variant: "destructive" }); return }
+    if (!bu.keys[0]?.key) { toast({ title: "API key required to test", variant: "destructive" }); return }
     if (type === 'custom' && !bu.url) { toast({ title: "Base URL required for this endpoint", variant: "destructive" }); return }
-    setIsTesting(buIdx); setFetchedModels(null); setSelectedIds(new Set()); setTestError(null)
+
+    setTestStatus(prev => ({ ...prev, [buIdx]: 'testing' }))
+    setTestErrors(prev => { const n = { ...prev }; delete n[buIdx]; return n })
+
     try {
       const token = getToken()
       const res = await fetch('/api/admin/providers/test-connection', {
@@ -289,48 +295,34 @@ function AddProviderDialog() {
       })
       const data = await res.json()
       if (!res.ok) {
-        setTestError(data?.error ?? 'Connection failed')
-        toast({ title: "Connection failed", variant: "destructive" })
+        setTestStatus(prev => ({ ...prev, [buIdx]: 'error' }))
+        setTestErrors(prev => ({ ...prev, [buIdx]: data?.error ?? 'Connection failed' }))
       } else {
-        setFetchedModels(data)
-        setSelectedIds(new Set(data.map((m: FetchedModelInfo) => m.id)))
-        toast({ title: `Found ${data.length} models` })
+        setTestStatus(prev => ({ ...prev, [buIdx]: 'ok' }))
       }
     } catch (err: any) {
-      setTestError(err.message ?? 'Network error')
-      toast({ title: "Failed to connect", variant: "destructive" })
-    } finally {
-      setIsTesting(null)
+      setTestStatus(prev => ({ ...prev, [buIdx]: 'error' }))
+      setTestErrors(prev => ({ ...prev, [buIdx]: err.message ?? 'Network error' }))
     }
   }
 
-  // ── Model selection ───────────────────────────────────────────────────────
+  // ── Model list management ─────────────────────────────────────────────────
 
-  const toggleModel = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
+  const addModel = () => setModels(prev => [...prev, { modelId: '' }])
 
-  const toggleAll = () => {
-    if (!fetchedModels) return
-    setSelectedIds(
-      selectedIds.size === fetchedModels.length
-        ? new Set()
-        : new Set(fetchedModels.map(m => m.id))
-    )
-  }
+  const updateModel = (idx: number, modelId: string) =>
+    setModels(prev => prev.map((m, i) => i === idx ? { modelId } : m))
 
-  const allSelected = fetchedModels != null && selectedIds.size === fetchedModels.length
+  const removeModel = (idx: number) =>
+    setModels(prev => prev.filter((_, i) => i !== idx))
 
   // ── Submission ────────────────────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name) return
-    // Validate: each BU must have at least one key
+
+    // Validate endpoints
     for (const bu of baseUrls) {
       if (bu.keys.some(k => !k.key.trim())) {
         toast({ title: "All API key fields must be filled in", variant: "destructive" }); return
@@ -340,10 +332,11 @@ function AddProviderDialog() {
       }
     }
 
+    const validModels = models.filter(m => m.modelId.trim() !== '')
+
     setIsSaving(true)
     try {
       const token = getToken()
-      const selectedModels = fetchedModels?.filter(m => selectedIds.has(m.id)) ?? []
       const res = await fetch('/api/admin/providers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -360,14 +353,14 @@ function AddProviderDialog() {
               priority: k.priority,
             })),
           })),
-          models: selectedModels,
+          models: validModels.map(m => ({ id: m.modelId.trim() })),
         }),
       })
       const data = await res.json()
       if (!res.ok) {
         toast({ title: data?.error ?? "Failed to create provider", variant: "destructive" })
       } else {
-        toast({ title: `Provider created with ${selectedModels.length} model${selectedModels.length !== 1 ? 's' : ''}` })
+        toast({ title: `Provider created${validModels.length > 0 ? ` with ${validModels.length} model${validModels.length !== 1 ? 's' : ''}` : ''}` })
         queryClient.invalidateQueries({ queryKey: getGetAdminProvidersQueryKey() })
         setOpen(false); reset()
       }
@@ -408,10 +401,7 @@ function AddProviderDialog() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label className="font-mono text-xs uppercase tracking-wider">Type</Label>
-                  <Select value={type} onValueChange={(v) => {
-                    setType(v as ProviderInputType)
-                    setFetchedModels(null); setSelectedIds(new Set())
-                  }}>
+                  <Select value={type} onValueChange={(v) => setType(v as ProviderInputType)}>
                     <SelectTrigger className="rounded-none bg-sidebar/10 font-mono text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent className="rounded-none border-2">
                       <SelectItem value="openai" className="font-mono">OpenAI</SelectItem>
@@ -445,19 +435,19 @@ function AddProviderDialog() {
                   </Button>
                 </div>
 
-                {/* Notice about model ID requirement */}
                 {baseUrls.length > 1 && (
                   <div className="flex items-start gap-2 p-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
                     <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
                     <p className="font-mono text-[10px] leading-relaxed">
-                      All endpoints in a cluster must expose the <strong>exact same model IDs</strong>. LiteLLM will load-balance and fail-over across endpoints.
+                      All endpoints in a cluster must expose the <strong>exact same model IDs</strong>.
                     </p>
                   </div>
                 )}
 
-                <div className="space-y-2 max-h-[340px] overflow-y-auto">
+                <div className="space-y-2 max-h-[360px] overflow-y-auto">
                   {baseUrls.map((bu, buIdx) => {
                     const isExpanded = expandedBu.has(buIdx)
+                    const status = testStatus[buIdx]
                     return (
                       <div key={buIdx} className="border bg-background">
                         {/* Endpoint header */}
@@ -480,6 +470,10 @@ function AddProviderDialog() {
                               {bu.keys.length} key{bu.keys.length !== 1 ? 's' : ''}
                             </span>
                           </button>
+                          {/* Test status indicator */}
+                          {status === 'ok' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                          {status === 'error' && <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />}
+                          {status === 'testing' && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />}
                           {baseUrls.length > 1 && (
                             <Button type="button" variant="ghost" size="icon"
                               className="h-5 w-5 text-destructive rounded-none shrink-0"
@@ -568,19 +562,22 @@ function AddProviderDialog() {
                               ))}
                             </div>
 
-                            {/* Test connection for this endpoint */}
+                            {/* Test connection */}
                             <Button
                               type="button" variant="secondary" size="sm"
                               className="w-full rounded-none font-mono uppercase text-[10px] h-7"
-                              onClick={() => handleFetchModels(buIdx)}
-                              disabled={isTesting !== null || !bu.keys[0]?.key}
+                              onClick={() => handleTestConnection(buIdx)}
+                              disabled={status === 'testing' || !bu.keys[0]?.key}
                             >
-                              {isTesting === buIdx
-                                ? "Connecting..."
-                                : fetchedModels && buIdx === 0
-                                  ? "Re-test & Fetch Models"
-                                  : "Test Connection & Fetch Models"}
+                              {status === 'testing' ? "Testing..." : "Test Connection"}
                             </Button>
+
+                            {/* Error message */}
+                            {testErrors[buIdx] && (
+                              <div className="p-2 bg-destructive/10 border border-destructive/30 text-destructive font-mono text-[10px] break-all">
+                                {testErrors[buIdx]}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -588,85 +585,54 @@ function AddProviderDialog() {
                   })}
                 </div>
               </div>
-
-              {testError && (
-                <div className="p-2 bg-destructive/10 border border-destructive/30 text-destructive font-mono text-xs break-all">
-                  {testError}
-                </div>
-              )}
             </div>
 
-            {/* Right — model selection */}
+            {/* Right — manual model entry */}
             <div className="md:border-l md:pl-6 flex flex-col border-t md:border-t-0 pt-4 md:pt-0">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-1">
                 <Label className="font-mono text-xs uppercase tracking-wider text-primary flex items-center gap-1.5">
                   <Zap className="h-3 w-3" /> Models to Expose
                 </Label>
-                {fetchedModels && fetchedModels.length > 0 && (
-                  <button type="button" onClick={toggleAll}
-                    className="font-mono text-[10px] uppercase text-muted-foreground hover:text-primary flex items-center gap-1">
-                    {allSelected ? <CheckSquare className="w-3 h-3" /> : <Square className="w-3 h-3" />}
-                    {allSelected ? "None" : "All"}
-                  </button>
-                )}
+                <button type="button"
+                  className="font-mono text-[9px] uppercase text-primary hover:underline flex items-center gap-0.5"
+                  onClick={addModel}>
+                  <Plus className="w-2.5 h-2.5" /> Model
+                </button>
               </div>
 
-              {/* Note about cluster model IDs */}
-              {baseUrls.length > 1 && (
-                <p className="font-mono text-[10px] text-muted-foreground mb-2 border-l-2 border-amber-500/40 pl-2">
-                  Test any one endpoint — all must share the same model IDs.
-                </p>
-              )}
+              <p className="font-mono text-[10px] text-muted-foreground mb-3 leading-relaxed">
+                Enter the exact model IDs the provider uses (e.g.{" "}
+                <span className="text-foreground">gpt-4o</span>,{" "}
+                <span className="text-foreground">claude-3-5-sonnet-20241022</span>). You can add
+                pricing and context window on the Models page after saving.
+              </p>
 
-              {!fetchedModels ? (
-                <div className="flex-1 flex items-center justify-center border-2 border-dashed p-6 text-center text-muted-foreground font-mono text-xs min-h-[120px]">
-                  Test an endpoint to detect available models
-                </div>
-              ) : fetchedModels.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center border-2 border-dashed p-6 text-center text-muted-foreground font-mono text-xs min-h-[120px]">
-                  No models returned — add them manually via Model Definitions
-                </div>
-              ) : (
-                <>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="font-mono text-[10px] text-muted-foreground uppercase">{selectedIds.size}/{fetchedModels.length} selected</span>
-                    <div className="flex gap-2 font-mono text-[10px] text-muted-foreground uppercase">
-                      <span className="flex items-center gap-1"><Database className="w-2.5 h-2.5" />Ctx</span>
-                      <span className="flex items-center gap-1"><DollarSign className="w-2.5 h-2.5" />In/Out</span>
-                    </div>
+              <div className="flex-1 space-y-1.5 max-h-[380px] overflow-y-auto">
+                {models.map((m, idx) => (
+                  <div key={idx} className="flex gap-1.5 items-center">
+                    <Input
+                      value={m.modelId}
+                      onChange={e => updateModel(idx, e.target.value)}
+                      placeholder="model-id-as-used-by-provider"
+                      className="rounded-none h-8 font-mono text-xs flex-1"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    {models.length > 1 && (
+                      <Button type="button" variant="ghost" size="icon"
+                        className="h-8 w-8 text-destructive rounded-none shrink-0"
+                        onClick={() => removeModel(idx)}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                   </div>
-                  <div className="flex-1 space-y-1 max-h-[300px] md:max-h-[380px] overflow-y-auto">
-                    {fetchedModels.map(m => (
-                      <div
-                        key={m.id}
-                        onClick={() => toggleModel(m.id)}
-                        className={`flex items-center gap-2 p-2 border cursor-pointer transition-colors hover:bg-sidebar/20
-                          ${selectedIds.has(m.id) ? 'bg-primary/5 border-primary/30' : 'bg-background'}`}
-                      >
-                        <Checkbox
-                          checked={selectedIds.has(m.id)}
-                          onCheckedChange={() => toggleModel(m.id)}
-                          className="rounded-none shrink-0"
-                          onClick={e => e.stopPropagation()}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-mono text-xs font-medium truncate">{m.name}</div>
-                          {m.metaSource === 'known' && (
-                            <div className="font-mono text-[9px] text-emerald-600 dark:text-emerald-400 uppercase">verified</div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-right shrink-0">
-                          <span className="font-mono text-[10px] text-muted-foreground w-10 text-right">{fmtCtx(m.contextWindow)}</span>
-                          <span className="font-mono text-[10px] w-20 text-right hidden sm:block">
-                            {m.inputCostPerMtok != null
-                              ? `${fmtPrice(m.inputCostPerMtok)}/${fmtPrice(m.outputCostPerMtok)}`
-                              : <span className="text-muted-foreground">—</span>}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
+                ))}
+              </div>
+
+              {models.filter(m => m.modelId.trim()).length === 0 && (
+                <p className="font-mono text-[10px] text-amber-600 dark:text-amber-400 mt-2">
+                  No models — you can add them later via Model Definitions.
+                </p>
               )}
             </div>
           </div>
@@ -676,7 +642,9 @@ function AddProviderDialog() {
               Cancel
             </Button>
             <Button type="submit" className="rounded-none font-mono uppercase w-full sm:w-auto" disabled={isSaving || !name}>
-              {isSaving ? "Saving..." : `Commit${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
+              {isSaving
+                ? "Saving..."
+                : `Commit${models.filter(m => m.modelId.trim()).length > 0 ? ` (${models.filter(m => m.modelId.trim()).length} model${models.filter(m => m.modelId.trim()).length !== 1 ? 's' : ''})` : ''}`}
             </Button>
           </DialogFooter>
         </form>
