@@ -7,6 +7,7 @@ import {
   litellmAddModel,
   litellmDeleteModel,
   litellmListModels,
+  litellmSyncModelUpdate,
   isLiteLLMAvailable,
   fetchModelsFromProvider,
 } from "../lib/litellm.js";

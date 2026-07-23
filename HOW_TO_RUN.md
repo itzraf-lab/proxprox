@@ -18,12 +18,18 @@ app is reachable from a single origin (`http://localhost:5173`).
 
 | Tool | Minimum version | Install |
 |------|----------------|---------|
-| Node.js | 24+ | e.g. the official tarball, `nvm`, or your distro |
-| pnpm | 10+ | `corepack enable pnpm` (ships with Node) |
-| Python | 3.13+ | e.g. [`uv`](https://docs.astral.sh/uv/): `uv python install 3.13` |
-| uv | latest | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Node.js | 22.12+ (22 LTS recommended) | e.g. the official tarball, `nvm`, or your distro |
+| pnpm | 10+ | `corepack enable` (ships with Node), then `pnpm --version` once to auto-install the pinned version |
+| Python | 3.10+ | Your distro's `python3` (e.g. `sudo apt-get install python3`) |
+| Python venv support | — | `sudo apt-get install python3-venv` on Debian/Ubuntu (recommended; the Makefile can work around its absence) |
 | PostgreSQL | 14+ | `sudo apt-get install postgresql` (LiteLLM's internal tables) |
 | Build toolchain | — | `sudo apt-get install build-essential` (for `better-sqlite3`) |
+| uv | optional | `curl -LsSf https://astral.sh/uv/install.sh \| sh` — fast path for the Python setup; manages its own Python 3.13 |
+
+> **uv is NOT required.** `make install` uses `uv` when it is installed, and
+> otherwise falls back to the system `python3` + `venv` + `pip` (bootstrapping
+> pip via `get-pip.py` if the venv has none). Any stock Linux machine with
+> Python 3.10+ works either way.
 
 > **Why PostgreSQL?** LiteLLM requires PostgreSQL for virtual-key and spend
 > tracking — SQLite is not supported by LiteLLM. Qillin's own app data (users,
@@ -51,6 +57,14 @@ cp .env.example .env
 make install      # pnpm install + a Python venv for LiteLLM (apps/litellm-proxy/.venv)
 ```
 
+The Python setup works on any machine:
+- **with `uv` installed** — creates a managed Python 3.13 venv (fast);
+- **without `uv`** — creates the venv from your system `python3` (3.10+) and
+  installs with `pip`, bootstrapping pip via `get-pip.py` when the venv has
+  none (e.g. Debian/Ubuntu without the `python3-venv` package);
+- **re-running** — skips the Python step if the venv already has the deps.
+  Force a rebuild with `rm -rf apps/litellm-proxy/.venv && make setup-python`.
+
 `better-sqlite3` is a native module and is compiled during `pnpm install`
 (needs `build-essential`).
 
@@ -60,7 +74,8 @@ make install      # pnpm install + a Python venv for LiteLLM (apps/litellm-proxy
 make db-setup     # creates role "qillin" and database "qillin_litellm"
 ```
 
-This matches the default `DATABASE_URL` in `.env.example`. If you use your own
+This runs `sudo -u postgres psql …`, so you need sudo access on the machine.
+It matches the default `DATABASE_URL` in `.env.example`. If you use your own
 PostgreSQL user/database, update `DATABASE_URL` in `.env` instead.
 
 ## 5. Run the three services
@@ -161,9 +176,13 @@ pnpm --filter @workspace/api-spec run codegen   # regenerate API client after ed
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
+| `uv: command not found` during `make install` | Old Makefile treated `uv` as mandatory | Update to the latest repo — the Makefile now falls back to system `python3` + `pip`; installing `uv` is optional |
+| `ERR_PNPM_NO_MATURE_MATCHING_VERSION ... pnpm@...` | Old `package.json` pinned `pnpm` itself as a dependency, blocked by the repo's `minimumReleaseAge` supply-chain policy | Update to the latest repo (the dependency was removed; the `packageManager` field pins pnpm instead) |
+| `python3 -m venv` fails / `No module named ensurepip` | Debian/Ubuntu splits venv support out | `sudo apt-get install python3-venv` — or just re-run `make install`, which auto-falls back to `--without-pip` + `get-pip.py` |
 | `better-sqlite3` build error | Missing C++ toolchain | `sudo apt-get install build-essential` |
-| "AI proxy is starting up" on chat | LiteLLM not fully started yet | Wait ~60 s after `make proxy`, then retry |
-| LiteLLM fails to start | `DATABASE_URL` unset or PostgreSQL unreachable | Check the connection string; ensure PostgreSQL is running (`pg_lsclusters`) |
-| `JWT_SECRET ... required` on API start | Missing secret | Set `JWT_SECRET` in `.env` |
+| Vite warns about the Node version | Node older than 22.12 (Vite 7 requirement) | Install Node 22 LTS or newer |
+| "AI proxy is starting up" on chat | LiteLLM not fully started yet | Wait ~30–60 s after `make proxy`, then retry |
+| LiteLLM fails to start | `DATABASE_URL` unset or PostgreSQL unreachable | Check the connection string; ensure PostgreSQL is running (`pg_lsclusters`) and that you ran `make db-setup` |
+| `JWT_SECRET ... required` on API start | Missing secret | Set `JWT_SECRET` in `.env` (step 2) |
 | Admin account not created | `ADMIN_EMAIL`/`ADMIN_PASSWORD` missing | Set them in `.env` before starting the API server |
 | 403 "user not allowed to access model" | Wrong model identifier in allowlist | In the admin panel, use the model's display name, not the internal `litellm_model` value |
