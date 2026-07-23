@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { db } from "../db/index.js";
 import { requireAuth, type AuthRequest } from "../middlewares/requireAuth.js";
 import { litellmGenerateKey, litellmDeleteKey, isLiteLLMAvailable } from "../lib/litellm.js";
+import { cacheMetrics } from "../lib/activity.js";
 
 const router = Router();
 
@@ -38,7 +39,8 @@ router.get("/usage", async (req: AuthRequest, res) => {
 
     const recentRequests = db
       .prepare(`
-        SELECT id, model, tokens_in as tokens_in, tokens_out as tokens_out, spend, timestamp
+        SELECT id, model, tokens_in as tokens_in, tokens_out as tokens_out, spend,
+               cache_read_tokens, cache_write_tokens, timestamp
         FROM activity_log
         WHERE user_id = ? AND type = 'request'
         ORDER BY timestamp DESC
@@ -62,6 +64,7 @@ router.get("/usage", async (req: AuthRequest, res) => {
         model: r.model ?? "",
         tokensIn: Number(r.tokens_in ?? 0),
         tokensOut: Number(r.tokens_out ?? 0),
+        ...cacheMetrics(r),
         spend: r.spend ?? 0,
         timestamp: r.timestamp,
       })),
@@ -164,7 +167,8 @@ router.get("/requests", (req: AuthRequest, res) => {
     ).c;
 
     const rows = db.prepare(`
-      SELECT id, model, tokens_in, tokens_out, spend, latency_ms, timestamp
+      SELECT id, model, tokens_in, tokens_out, spend, latency_ms,
+             cache_read_tokens, cache_write_tokens, timestamp
       FROM activity_log
       WHERE user_id = ? AND type = 'request'${whereModel}
       ORDER BY timestamp DESC
@@ -177,6 +181,7 @@ router.get("/requests", (req: AuthRequest, res) => {
         model: r.model ?? "",
         tokensIn: Number(r.tokens_in ?? 0),
         tokensOut: Number(r.tokens_out ?? 0),
+        ...cacheMetrics(r),
         spend: r.spend ?? 0,
         latencyMs: r.latency_ms ?? null,
         timestamp: r.timestamp,

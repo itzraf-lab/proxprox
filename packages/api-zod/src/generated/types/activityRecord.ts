@@ -19,6 +19,10 @@ export interface ActivityRecord {
   tokensIn?: number | null;
   /** @nullable */
   tokensOut?: number | null;
+  cached?: boolean;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  uncachedTokens?: number;
   /** @nullable */
   spend?: number | null;
   timestamp: string;

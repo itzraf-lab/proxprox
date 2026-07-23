@@ -129,6 +129,35 @@ response = client.chat.completions.create(
 )
 ```
 
+### Prompt caching
+
+Qillin supports two prompt-caching mechanisms, which can be used together:
+
+1. **Automatic depth-based caching** — pass the optional top-level
+   `cacheAtDepth` parameter (a positive integer). Qillin inserts a
+   `cache_control` block N messages before the final message and strips the
+   parameter before forwarding:
+
+   ```python
+   response = client.chat.completions.create(
+       model="your-model-display-name",
+       messages=[...],
+       extra_body={"cacheAtDepth": 3},  # cache breakpoint 3 messages before the last
+   )
+   ```
+
+2. **Manual caching** — place `cache_control` blocks directly in your
+   messages, e.g.
+   `{"role": "system", "content": [{"type": "text", "text": "...", "cache_control": {"type": "ephemeral"}}]}`.
+   Manual blocks are passed through untouched and take precedence on their
+   message; `cacheAtDepth` still applies to its own target.
+
+Cached requests are billed from their token breakdown (cache-read,
+cache-write, and uncached input tokens) and flagged as **cached** in the
+Request Log. Admins can set custom cache write/read prices per million tokens
+under **Admin → Cache Pricing**; unset prices default to Anthropic's standard
+cache pricing (write = 125%, read = 10% of the model's base input price).
+
 ---
 
 ## Project layout

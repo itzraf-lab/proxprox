@@ -13,6 +13,7 @@
 import { Router } from "express";
 import { db, uuidv4 } from "../db/index.js";
 import { logger } from "../lib/logger.js";
+import { computeCachedRequestSpend } from "../lib/pricing.js";
 
 const router = Router();
 const LITELLM_MASTER_KEY = process.env.LITELLM_MASTER_KEY ?? "";
@@ -40,20 +41,41 @@ router.use(validateInternalKey);
 
 /**
  * POST /api/internal/litellm-event
- * Body: { userId, model, tokensIn, tokensOut, spend, latencyMs? }
+ * Body: { userId, model, tokensIn, tokensOut, spend, latencyMs?,
+ *         cacheReadTokens?, cacheWriteTokens? }
  */
 router.post("/litellm-event", (req, res) => {
-  const { userId, model, tokensIn, tokensOut, spend, latencyMs } = req.body ?? {};
+  const { userId, model, tokensIn, tokensOut, spend, latencyMs, cacheReadTokens, cacheWriteTokens } = req.body ?? {};
 
   if (!userId || !model) {
     res.status(400).json({ error: "userId and model are required" });
     return;
   }
 
-  const spendAmount = Number(spend) || 0;
   const tokensInN = Number(tokensIn) || 0;
   const tokensOutN = Number(tokensOut) || 0;
   const latencyN = Number(latencyMs) || null;
+  const cacheReadN = Math.max(0, Number(cacheReadTokens) || 0);
+  const cacheWriteN = Math.max(0, Number(cacheWriteTokens) || 0);
+  const isCachedRequest = cacheReadN > 0 || cacheWriteN > 0;
+
+  // Spend: for cached requests, recompute from the token breakdown so custom
+  // admin-configured cache pricing (or Anthropic-standard default percentages)
+  // is applied. For uncached requests — or when the model isn't in the
+  // catalog — trust the cost LiteLLM computed upstream.
+  let spendAmount = Number(spend) || 0;
+  if (isCachedRequest) {
+    const breakdown = computeCachedRequestSpend({
+      tokensIn: tokensInN,
+      tokensOut: tokensOutN,
+      cacheReadTokens: cacheReadN,
+      cacheWriteTokens: cacheWriteN,
+      model: String(model),
+    });
+    if (breakdown) {
+      spendAmount = breakdown.spend;
+    }
+  }
 
   // Look up user email for the log record
   const user = db
@@ -73,9 +95,9 @@ router.post("/litellm-event", (req, res) => {
   const txn = db.transaction(() => {
     // Insert activity record
     db.prepare(`
-      INSERT INTO activity_log (id, type, user_id, user_email, model, tokens_in, tokens_out, spend, latency_ms, timestamp)
-      VALUES (?, 'request', ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(uuidv4(), userId, user.email, model, tokensInN, tokensOutN, spendAmount, latencyN);
+      INSERT INTO activity_log (id, type, user_id, user_email, model, tokens_in, tokens_out, spend, latency_ms, cache_read_tokens, cache_write_tokens, timestamp)
+      VALUES (?, 'request', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(uuidv4(), userId, user.email, model, tokensInN, tokensOutN, spendAmount, latencyN, cacheReadN, cacheWriteN);
 
     // Atomically deduct Qredits using SQL arithmetic (floor at 0)
     if (spendAmount > 0) {

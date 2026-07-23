@@ -7,6 +7,7 @@ import router from "./routes/index.js";
 import v1Router from "./routes/v1.js";
 import { litellmProxy } from "./routes/proxy.js";
 import { requireApiOrJwtAuth } from "./middlewares/requireAuth.js";
+import { promptCacheMiddleware } from "./middlewares/promptCache.js";
 import { logger } from "./lib/logger.js";
 
 const app: Express = express();
@@ -82,11 +83,17 @@ app.use(
 //     Qillin-native /v1 routes. No body parser needed (all are GET today).
 //     Unmatched routes call next() and fall through to the proxy.
 //
+//  2b. Prompt-cache middleware — parses the JSON body of POST chat
+//     completions only, expanding the optional `cacheAtDepth` parameter into
+//     a cache_control block. All other /v1 traffic passes through untouched.
+//
 //  3. Streaming proxy — pipes the raw body stream to LiteLLM. Must receive
-//     the request BEFORE any body parser that would buffer/consume the stream.
+//     the request BEFORE any body parser that would buffer/consume the stream
+//     (the chat-completions exception above re-serializes via fixRequestBody).
 //
 app.use("/v1", requireApiOrJwtAuth);
 app.use("/v1", v1Router);
+app.use("/v1", promptCacheMiddleware);
 app.use("/v1", litellmProxy);
 
 // ── Body parsing (management API only) ───────────────────────────────────────

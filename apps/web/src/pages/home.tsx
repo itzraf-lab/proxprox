@@ -3,6 +3,7 @@ import { Shell } from "@/components/layout"
 import { Button } from "@/components/ui/button"
 import { Link } from "wouter"
 import { Activity, EyeOff, KeyRound, Route, ShieldCheck, Terminal } from "lucide-react"
+import { ComplianceBadges } from "@/components/compliance-badges"
 
 export default function Home() {
   return (
@@ -148,6 +149,26 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {/* Compliance footer */}
+        <footer className="border-t bg-sidebar/30">
+          <div className="mx-auto max-w-7xl px-6 py-12 lg:px-8">
+            <div className="mb-8 text-center">
+              <h2 className="font-mono text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                Enterprise-Grade Compliance &amp; Security
+              </h2>
+            </div>
+            <ComplianceBadges />
+            <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-sidebar-border pt-6 sm:flex-row">
+              <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+                © {new Date().getFullYear()} Qillin — AI Proxy Platform
+              </p>
+              <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-widest">
+                Zero message logging · EU data protection · Audited controls
+              </p>
+            </div>
+          </div>
+        </footer>
       </div>
     </Shell>
   )

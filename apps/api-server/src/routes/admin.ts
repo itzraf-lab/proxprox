@@ -13,6 +13,13 @@ import {
 } from "../lib/litellm.js";
 import { syncModelsToLiteLLM, litellmModelString, computeDeploymentWeight } from "../lib/sync.js";
 import { encryptSecret, decryptSecret } from "../lib/crypto.js";
+import {
+  getCustomCachePricing,
+  setCustomCachePricing,
+  DEFAULT_CACHE_WRITE_MULTIPLIER,
+  DEFAULT_CACHE_READ_MULTIPLIER,
+} from "../lib/pricing.js";
+import { cacheMetrics } from "../lib/activity.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -215,6 +222,7 @@ router.get("/activity", (_req, res) => {
       model: r.model ?? null,
       tokensIn: r.tokens_in ?? null,
       tokensOut: r.tokens_out ?? null,
+      ...cacheMetrics(r),
       spend: r.spend ?? null,
       timestamp: r.timestamp,
     })),
@@ -243,7 +251,8 @@ router.get("/requests", (req: AuthRequest, res) => {
     ).c;
 
     const rows = db.prepare(`
-      SELECT id, user_id, user_email, model, tokens_in, tokens_out, spend, latency_ms, timestamp
+      SELECT id, user_id, user_email, model, tokens_in, tokens_out, spend, latency_ms,
+             cache_read_tokens, cache_write_tokens, timestamp
       FROM activity_log ${where}
       ORDER BY timestamp DESC
       LIMIT ? OFFSET ?
@@ -257,6 +266,7 @@ router.get("/requests", (req: AuthRequest, res) => {
         model: r.model ?? "",
         tokensIn: Number(r.tokens_in ?? 0),
         tokensOut: Number(r.tokens_out ?? 0),
+        ...cacheMetrics(r),
         spend: r.spend ?? 0,
         latencyMs: r.latency_ms ?? null,
         timestamp: r.timestamp,
@@ -295,6 +305,62 @@ router.get("/model-utilization", (_req, res) => {
     tokensOut: Number(r.tokens_out),
     spend: r.spend,
   })));
+});
+
+// ── Cache pricing ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/cache-pricing
+ * Returns the admin-configured custom cache prices (null = unset) together
+ * with the Anthropic-standard default multipliers applied when unset.
+ */
+router.get("/cache-pricing", (_req, res) => {
+  const custom = getCustomCachePricing();
+  res.json({
+    ...custom,
+    defaults: {
+      writeMultiplier: DEFAULT_CACHE_WRITE_MULTIPLIER,
+      readMultiplier: DEFAULT_CACHE_READ_MULTIPLIER,
+    },
+  });
+});
+
+/**
+ * PUT /api/admin/cache-pricing
+ * Body: { cacheWriteCostPerMtok: number|null, cacheReadCostPerMtok: number|null }
+ * Each price is configured independently; null restores the Anthropic-standard
+ * default percentage of the model's base input price for that side.
+ */
+router.put("/cache-pricing", (req: AuthRequest, res) => {
+  const { cacheWriteCostPerMtok, cacheReadCostPerMtok } = req.body ?? {};
+
+  const validate = (v: unknown, name: string): string | null => {
+    if (v === null || v === undefined) return null;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+      return `${name} must be a non-negative number or null`;
+    }
+    return null;
+  };
+
+  const err = validate(cacheWriteCostPerMtok, "cacheWriteCostPerMtok") ?? validate(cacheReadCostPerMtok, "cacheReadCostPerMtok");
+  if (err) {
+    res.status(400).json({ error: err });
+    return;
+  }
+
+  setCustomCachePricing({
+    cacheWriteCostPerMtok: cacheWriteCostPerMtok ?? null,
+    cacheReadCostPerMtok: cacheReadCostPerMtok ?? null,
+  });
+
+  const custom = getCustomCachePricing();
+  res.json({
+    ...custom,
+    defaults: {
+      writeMultiplier: DEFAULT_CACHE_WRITE_MULTIPLIER,
+      readMultiplier: DEFAULT_CACHE_READ_MULTIPLIER,
+    },
+  });
 });
 
 // ── Users ─────────────────────────────────────────────────────────────────────

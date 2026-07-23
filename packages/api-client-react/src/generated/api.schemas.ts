@@ -66,6 +66,11 @@ export interface RequestRecord {
   model: string;
   tokensIn: number;
   tokensOut: number;
+  /** True when the request used prompt caching (any cache read or write) */
+  cached: boolean;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  uncachedTokens: number;
   spend: number;
   /** @nullable */
   latencyMs?: number | null;
@@ -155,6 +160,10 @@ export interface ActivityRecord {
   tokensIn?: number | null;
   /** @nullable */
   tokensOut?: number | null;
+  cached?: boolean;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  uncachedTokens?: number;
   /** @nullable */
   spend?: number | null;
   timestamp: string;
@@ -235,22 +244,14 @@ export interface ProviderApiKey {
   failCount: number;
 }
 
-/** A single base URL entry within a provider cluster, with its own set of API keys */
-export interface ProviderBaseUrl {
-  id: string;
-  /** @nullable — null means use the provider type's default endpoint */
-  url: string | null;
-  priority: number;
-  keys: ProviderApiKey[];
-}
-
 export interface Provider {
   id: string;
   name: string;
   type: ProviderType;
+  /** @nullable */
+  baseUrl?: string | null;
   loadBalancing: ProviderLoadBalancing;
-  /** Ordered list of base URL entries (cluster endpoints) */
-  baseUrls: ProviderBaseUrl[];
+  apiKeys: ProviderApiKey[];
   modelCount: number;
   isActive: boolean;
   createdAt: string;
@@ -261,14 +262,6 @@ export interface ProviderApiKeyInput {
   /** @nullable */
   label?: string | null;
   priority: number;
-}
-
-/** A base URL entry with its keys, used when creating/updating a provider */
-export interface ProviderBaseUrlInput {
-  /** @nullable — null means use the provider type's default endpoint */
-  url?: string | null;
-  priority: number;
-  keys: ProviderApiKeyInput[];
 }
 
 export type ProviderInputType = typeof ProviderInputType[keyof typeof ProviderInputType];
@@ -291,9 +284,10 @@ export const ProviderInputLoadBalancing = {
 export interface ProviderInput {
   name: string;
   type: ProviderInputType;
+  /** @nullable */
+  baseUrl?: string | null;
   loadBalancing: ProviderInputLoadBalancing;
-  /** Ordered list of base URL entries (cluster endpoints) */
-  baseUrls: ProviderBaseUrlInput[];
+  apiKeys: ProviderApiKeyInput[];
 }
 
 export interface FetchModelsInput {
@@ -325,10 +319,43 @@ export interface AdminRequestRecord {
   model: string;
   tokensIn: number;
   tokensOut: number;
+  /** True when the request used prompt caching (any cache read or write) */
+  cached: boolean;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  uncachedTokens: number;
   spend: number;
   /** @nullable */
   latencyMs?: number | null;
   timestamp: string;
+}
+
+export type CachePricingDefaults = {
+  /** Default cache-write price as a multiple of the base input price */
+  writeMultiplier: number;
+  /** Default cache-read price as a multiple of the base input price */
+  readMultiplier: number;
+};
+
+export interface CachePricing {
+  /**
+     * Custom price per million cache-write tokens; null = provider default
+     * @nullable
+     */
+  cacheWriteCostPerMtok: number | null;
+  /**
+     * Custom price per million cache-read tokens; null = provider default
+     * @nullable
+     */
+  cacheReadCostPerMtok: number | null;
+  defaults: CachePricingDefaults;
+}
+
+export interface CachePricingInput {
+  /** @nullable */
+  cacheWriteCostPerMtok?: number | null;
+  /** @nullable */
+  cacheReadCostPerMtok?: number | null;
 }
 
 export interface AdminRequestsPage {
@@ -350,3 +377,4 @@ page?: number;
 limit?: number;
 model?: string;
 };
+

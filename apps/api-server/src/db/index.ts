@@ -105,7 +105,15 @@ db.exec(`
     tokens_out INTEGER,
     spend REAL,
     latency_ms INTEGER,
+    cache_read_tokens INTEGER,
+    cache_write_tokens INTEGER,
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
 
@@ -114,6 +122,20 @@ try {
   db.exec("ALTER TABLE activity_log ADD COLUMN latency_ms INTEGER");
 } catch {
   // Column already exists on fresh databases (added in CREATE TABLE above).
+}
+
+// Migrate: add prompt-caching token metrics to activity_log.
+// cache_read_tokens  — tokens served from the provider's prompt cache
+// cache_write_tokens — tokens written into the provider's prompt cache
+try {
+  db.exec("ALTER TABLE activity_log ADD COLUMN cache_read_tokens INTEGER");
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec("ALTER TABLE activity_log ADD COLUMN cache_write_tokens INTEGER");
+} catch {
+  // Column already exists.
 }
 
 // Migrate: add credit_limit to users for existing databases.

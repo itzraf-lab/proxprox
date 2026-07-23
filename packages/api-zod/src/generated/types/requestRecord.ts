@@ -11,6 +11,11 @@ export interface RequestRecord {
   model: string;
   tokensIn: number;
   tokensOut: number;
+  /** True when the request used prompt caching (any cache read or write) */
+  cached: boolean;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  uncachedTokens: number;
   spend: number;
   /** @nullable */
   latencyMs?: number | null;

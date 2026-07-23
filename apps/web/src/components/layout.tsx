@@ -2,7 +2,7 @@ import * as React from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit, History, ScrollText } from "lucide-react"
+import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit, History, ScrollText, Zap } from "lucide-react"
 import { Button } from "./ui/button"
 import { Link } from "wouter"
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet"
@@ -41,6 +41,9 @@ function NavLinks({ location, isAdmin, onNavigate }: { location: string; isAdmin
           </Link>
           <Link href="/admin/models" className={cls("/admin/models")} onClick={onNavigate}>
             <BrainCircuit className="h-4 w-4 shrink-0" /> Models
+          </Link>
+          <Link href="/admin/cache-pricing" className={cls("/admin/cache-pricing")} onClick={onNavigate}>
+            <Zap className="h-4 w-4 shrink-0" /> Cache Pricing
           </Link>
           <Link href="/admin/requests" className={cls("/admin/requests")} onClick={onNavigate}>
             <ScrollText className="h-4 w-4 shrink-0" /> Global Stream

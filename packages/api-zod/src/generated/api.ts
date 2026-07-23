@@ -106,6 +106,10 @@ export const GetUserUsageResponse = zod.object({
   "model": zod.string(),
   "tokensIn": zod.number(),
   "tokensOut": zod.number(),
+  "cached": zod.boolean().describe('True when the request used prompt caching (any cache read or write)'),
+  "cacheReadTokens": zod.number(),
+  "cacheWriteTokens": zod.number(),
+  "uncachedTokens": zod.number(),
   "spend": zod.number(),
   "latencyMs": zod.number().nullish(),
   "timestamp": zod.string()
@@ -229,6 +233,10 @@ export const GetAdminActivityResponseItem = zod.object({
   "model": zod.string().nullish(),
   "tokensIn": zod.number().nullish(),
   "tokensOut": zod.number().nullish(),
+  "cached": zod.boolean().optional(),
+  "cacheReadTokens": zod.number().optional(),
+  "cacheWriteTokens": zod.number().optional(),
+  "uncachedTokens": zod.number().optional(),
   "spend": zod.number().nullish(),
   "timestamp": zod.string()
 })
@@ -565,6 +573,10 @@ export const GetAdminRequestsResponse = zod.object({
   "model": zod.string(),
   "tokensIn": zod.number(),
   "tokensOut": zod.number(),
+  "cached": zod.boolean().describe('True when the request used prompt caching (any cache read or write)'),
+  "cacheReadTokens": zod.number(),
+  "cacheWriteTokens": zod.number(),
+  "uncachedTokens": zod.number(),
   "spend": zod.number(),
   "latencyMs": zod.number().nullish(),
   "timestamp": zod.string()
@@ -590,6 +602,37 @@ export const GetAdminModelUtilizationResponse = zod.array(GetAdminModelUtilizati
 
 
 /**
+ * @summary Get custom prompt-cache pricing configuration
+ */
+export const GetAdminCachePricingResponse = zod.object({
+  "cacheWriteCostPerMtok": zod.number().nullable().describe('Custom price per million cache-write tokens; null = provider default'),
+  "cacheReadCostPerMtok": zod.number().nullable().describe('Custom price per million cache-read tokens; null = provider default'),
+  "defaults": zod.object({
+  "writeMultiplier": zod.number().describe('Default cache-write price as a multiple of the base input price'),
+  "readMultiplier": zod.number().describe('Default cache-read price as a multiple of the base input price')
+})
+})
+
+
+/**
+ * @summary Set custom prompt-cache pricing (null restores provider defaults)
+ */
+export const UpdateAdminCachePricingBody = zod.object({
+  "cacheWriteCostPerMtok": zod.number().nullish(),
+  "cacheReadCostPerMtok": zod.number().nullish()
+})
+
+export const UpdateAdminCachePricingResponse = zod.object({
+  "cacheWriteCostPerMtok": zod.number().nullable().describe('Custom price per million cache-write tokens; null = provider default'),
+  "cacheReadCostPerMtok": zod.number().nullable().describe('Custom price per million cache-read tokens; null = provider default'),
+  "defaults": zod.object({
+  "writeMultiplier": zod.number().describe('Default cache-write price as a multiple of the base input price'),
+  "readMultiplier": zod.number().describe('Default cache-read price as a multiple of the base input price')
+})
+})
+
+
+/**
  * @summary Get paginated request history for the current user
  */
 export const getUserRequestsQueryPageDefault = 1;
@@ -607,6 +650,10 @@ export const GetUserRequestsResponse = zod.object({
   "model": zod.string(),
   "tokensIn": zod.number(),
   "tokensOut": zod.number(),
+  "cached": zod.boolean().describe('True when the request used prompt caching (any cache read or write)'),
+  "cacheReadTokens": zod.number(),
+  "cacheWriteTokens": zod.number(),
+  "uncachedTokens": zod.number(),
   "spend": zod.number(),
   "latencyMs": zod.number().nullish(),
   "timestamp": zod.string()

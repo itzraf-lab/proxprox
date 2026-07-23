@@ -27,6 +27,8 @@ import type {
   ApiKey,
   ApiKeyInput,
   AuthResponse,
+  CachePricing,
+  CachePricingInput,
   CreditInput,
   ErrorResponse,
   FetchModelsInput,
@@ -2144,6 +2146,153 @@ export function useGetAdminModelUtilization<TData = Awaited<ReturnType<typeof ge
 
 
 
+
+export const getGetAdminCachePricingUrl = () => {
+
+
+
+
+  return `/api/admin/cache-pricing`
+}
+
+/**
+ * @summary Get custom prompt-cache pricing configuration
+ */
+export const getAdminCachePricing = async ( options?: RequestInit): Promise<CachePricing> => {
+
+  return customFetch<CachePricing>(getGetAdminCachePricingUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminCachePricingQueryKey = () => {
+    return [
+    `/api/admin/cache-pricing`
+    ] as const;
+    }
+
+
+export const getGetAdminCachePricingQueryOptions = <TData = Awaited<ReturnType<typeof getAdminCachePricing>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminCachePricing>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminCachePricingQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminCachePricing>>> = ({ signal }) => getAdminCachePricing({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminCachePricing>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminCachePricingQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminCachePricing>>>
+export type GetAdminCachePricingQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get custom prompt-cache pricing configuration
+ */
+
+export function useGetAdminCachePricing<TData = Awaited<ReturnType<typeof getAdminCachePricing>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminCachePricing>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminCachePricingQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateAdminCachePricingUrl = () => {
+
+
+
+
+  return `/api/admin/cache-pricing`
+}
+
+/**
+ * @summary Set custom prompt-cache pricing (null restores provider defaults)
+ */
+export const updateAdminCachePricing = async (cachePricingInput: CachePricingInput, options?: RequestInit): Promise<CachePricing> => {
+
+  return customFetch<CachePricing>(getUpdateAdminCachePricingUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(cachePricingInput)
+  }
+);}
+
+
+
+
+export const getUpdateAdminCachePricingMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminCachePricing>>, TError,{data: BodyType<CachePricingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAdminCachePricing>>, TError,{data: BodyType<CachePricingInput>}, TContext> => {
+
+const mutationKey = ['updateAdminCachePricing'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAdminCachePricing>>, {data: BodyType<CachePricingInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateAdminCachePricing(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAdminCachePricingMutationResult = NonNullable<Awaited<ReturnType<typeof updateAdminCachePricing>>>
+    export type UpdateAdminCachePricingMutationBody = BodyType<CachePricingInput>
+    export type UpdateAdminCachePricingMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Set custom prompt-cache pricing (null restores provider defaults)
+ */
+export const useUpdateAdminCachePricing = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminCachePricing>>, TError,{data: BodyType<CachePricingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAdminCachePricing>>,
+        TError,
+        {data: BodyType<CachePricingInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateAdminCachePricingMutationOptions(options));
+    }
 
 export const getGetUserRequestsUrl = (params?: GetUserRequestsParams,) => {
   const normalizedParams = new URLSearchParams();

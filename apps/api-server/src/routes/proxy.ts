@@ -14,10 +14,11 @@
  * This handler swaps the client's Authorization header with that key before
  * forwarding to LiteLLM.
  */
-import { createProxyMiddleware } from "http-proxy-middleware";
+import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import type { Options } from "http-proxy-middleware";
 import type { Request, Response } from "express";
 import type { IncomingMessage } from "http";
+import { BODY_PARSED_FLAG } from "../middlewares/promptCache.js";
 
 const LITELLM_URL = process.env.LITELLM_URL ?? "http://127.0.0.1:8000";
 
@@ -106,6 +107,14 @@ const proxyOptions: Options = {
         req.socket?.remoteAddress ??
         "unknown";
       proxyReq.setHeader("x-real-ip", clientIp);
+
+      // If the prompt-cache middleware consumed and parsed the JSON body
+      // (chat completions only), re-serialize it — with any cache_control
+      // insertions — into the proxied request. fixRequestBody() writes the
+      // body, so it MUST run last: setHeader() after write() throws.
+      if ((req as any)[BODY_PARSED_FLAG]) {
+        fixRequestBody(proxyReq, req as any);
+      }
     },
   },
 };

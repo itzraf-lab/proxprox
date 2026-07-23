@@ -90,6 +90,19 @@ class QillinLogger(CustomLogger):
             tokens_in = int(getattr(usage, "prompt_tokens", 0) or 0)
             tokens_out = int(getattr(usage, "completion_tokens", 0) or 0)
 
+            # Prompt-cache metrics. Anthropic-style usage carries
+            # cache_read_input_tokens / cache_creation_input_tokens; some
+            # providers report cached tokens via prompt_tokens_details instead.
+            cache_read_tokens = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            cache_write_tokens = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+            if cache_read_tokens == 0:
+                details = getattr(usage, "prompt_tokens_details", None)
+                if details is not None:
+                    if isinstance(details, dict):
+                        cache_read_tokens = int(details.get("cached_tokens", 0) or 0)
+                    else:
+                        cache_read_tokens = int(getattr(details, "cached_tokens", 0) or 0)
+
             latency_ms = 0
             if start_time and end_time:
                 try:
@@ -102,6 +115,8 @@ class QillinLogger(CustomLogger):
                 "model": model,
                 "tokensIn": tokens_in,
                 "tokensOut": tokens_out,
+                "cacheReadTokens": cache_read_tokens,
+                "cacheWriteTokens": cache_write_tokens,
                 "spend": float(response_cost),
                 "latencyMs": latency_ms,
             }

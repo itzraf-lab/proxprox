@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatCurrency, formatNumber } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, Loader2, FilterX, Search } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2, FilterX, Search, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 
 export default function AdminRequests() {
@@ -95,6 +95,9 @@ function AdminRequestsContent() {
                   <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold">Target Model</TableHead>
                   <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Tk In</TableHead>
                   <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Tk Out</TableHead>
+                  <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Cache R</TableHead>
+                  <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Cache W</TableHead>
+                  <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Uncached</TableHead>
                   <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Cost</TableHead>
                   <TableHead className="font-mono text-[10px] uppercase tracking-wider font-bold text-right">Lat</TableHead>
                 </TableRow>
@@ -102,22 +105,34 @@ function AdminRequestsContent() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-32 text-center">
+                    <TableCell colSpan={10} className="h-32 text-center">
                       <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
                     </TableCell>
                   </TableRow>
                 ) : requestsPage?.items && requestsPage.items.length > 0 ? (
                   requestsPage.items.map((req) => (
-                    <TableRow key={req.id} className="hover:bg-sidebar/20 transition-colors">
+                    <TableRow key={req.id} className={`hover:bg-sidebar/20 transition-colors ${req.cached ? "bg-primary/5" : ""}`}>
                       <TableCell className="font-mono text-[11px] whitespace-nowrap text-muted-foreground">
                         {new Date(req.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </TableCell>
                       <TableCell className="font-mono text-[11px] truncate max-w-[150px]" title={req.userEmail || req.userId || "UNKNOWN"}>
                         {req.userEmail || req.userId || "UNKNOWN"}
                       </TableCell>
-                      <TableCell className="font-mono text-[11px] font-bold text-primary">{req.model}</TableCell>
+                      <TableCell className="font-mono text-[11px] font-bold text-primary">
+                        <div className="flex items-center gap-1.5">
+                          {req.model}
+                          {req.cached && (
+                            <Badge variant="secondary" className="rounded-none px-1 py-0 text-[8px] h-4 font-mono uppercase bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                              <Zap className="h-2 w-2 mr-0.5" /> Cache
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="font-mono text-[11px] text-right text-muted-foreground">{formatNumber(req.tokensIn)}</TableCell>
                       <TableCell className="font-mono text-[11px] text-right text-muted-foreground">{formatNumber(req.tokensOut)}</TableCell>
+                      <TableCell className="font-mono text-[11px] text-right text-emerald-600 dark:text-emerald-400">{req.cached ? formatNumber(req.cacheReadTokens) : "—"}</TableCell>
+                      <TableCell className="font-mono text-[11px] text-right text-amber-600 dark:text-amber-400">{req.cached ? formatNumber(req.cacheWriteTokens) : "—"}</TableCell>
+                      <TableCell className="font-mono text-[11px] text-right text-muted-foreground">{formatNumber(req.uncachedTokens)}</TableCell>
                       <TableCell className="font-mono text-[11px] text-right font-bold">{formatCurrency(req.spend)}</TableCell>
                       <TableCell className="font-mono text-[11px] text-right text-muted-foreground">
                         {req.latencyMs !== null && req.latencyMs !== undefined ? `${req.latencyMs}ms` : "—"}
@@ -126,7 +141,7 @@ function AdminRequestsContent() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center font-mono text-sm text-muted-foreground py-12 border-dashed">
+                    <TableCell colSpan={10} className="text-center font-mono text-sm text-muted-foreground py-12 border-dashed">
                       NO RECORDS MATCHING CRITERIA
                     </TableCell>
                   </TableRow>

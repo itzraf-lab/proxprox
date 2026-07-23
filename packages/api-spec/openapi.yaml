@@ -555,6 +555,42 @@ paths:
                 items:
                   $ref: "#/components/schemas/ModelUsage"
 
+  /admin/cache-pricing:
+    get:
+      operationId: getAdminCachePricing
+      tags: [admin]
+      summary: Get custom prompt-cache pricing configuration
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CachePricing"
+    put:
+      operationId: updateAdminCachePricing
+      tags: [admin]
+      summary: Set custom prompt-cache pricing (null restores provider defaults)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CachePricingInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CachePricing"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /user/requests:
     get:
       operationId: getUserRequests
@@ -705,13 +741,22 @@ components:
           type: integer
         tokensOut:
           type: integer
+        cached:
+          type: boolean
+          description: True when the request used prompt caching (any cache read or write)
+        cacheReadTokens:
+          type: integer
+        cacheWriteTokens:
+          type: integer
+        uncachedTokens:
+          type: integer
         spend:
           type: number
         latencyMs:
           type: ["integer", "null"]
         timestamp:
           type: string
-      required: [id, model, tokensIn, tokensOut, spend, timestamp]
+      required: [id, model, tokensIn, tokensOut, cached, cacheReadTokens, cacheWriteTokens, uncachedTokens, spend, timestamp]
 
     ApiKey:
       type: object
@@ -849,6 +894,14 @@ components:
           type: ["integer", "null"]
         tokensOut:
           type: ["integer", "null"]
+        cached:
+          type: boolean
+        cacheReadTokens:
+          type: integer
+        cacheWriteTokens:
+          type: integer
+        uncachedTokens:
+          type: integer
         spend:
           type: ["number", "null"]
         timestamp:
@@ -1031,13 +1084,51 @@ components:
           type: integer
         tokensOut:
           type: integer
+        cached:
+          type: boolean
+          description: True when the request used prompt caching (any cache read or write)
+        cacheReadTokens:
+          type: integer
+        cacheWriteTokens:
+          type: integer
+        uncachedTokens:
+          type: integer
         spend:
           type: number
         latencyMs:
           type: ["integer", "null"]
         timestamp:
           type: string
-      required: [id, model, tokensIn, tokensOut, spend, timestamp]
+      required: [id, model, tokensIn, tokensOut, cached, cacheReadTokens, cacheWriteTokens, uncachedTokens, spend, timestamp]
+
+    CachePricing:
+      type: object
+      properties:
+        cacheWriteCostPerMtok:
+          type: ["number", "null"]
+          description: Custom price per million cache-write tokens; null = provider default
+        cacheReadCostPerMtok:
+          type: ["number", "null"]
+          description: Custom price per million cache-read tokens; null = provider default
+        defaults:
+          type: object
+          properties:
+            writeMultiplier:
+              type: number
+              description: Default cache-write price as a multiple of the base input price
+            readMultiplier:
+              type: number
+              description: Default cache-read price as a multiple of the base input price
+          required: [writeMultiplier, readMultiplier]
+      required: [cacheWriteCostPerMtok, cacheReadCostPerMtok, defaults]
+
+    CachePricingInput:
+      type: object
+      properties:
+        cacheWriteCostPerMtok:
+          type: ["number", "null"]
+        cacheReadCostPerMtok:
+          type: ["number", "null"]
 
     AdminRequestsPage:
       type: object

@@ -11,6 +11,7 @@ import AdminDashboard from '@/pages/admin/dashboard';
 import AdminUsers from '@/pages/admin/users';
 import AdminProviders from '@/pages/admin/providers';
 import AdminModels from '@/pages/admin/models';
+import AdminCachePricing from '@/pages/admin/cache-pricing';
 import Requests from '@/pages/requests';
 import AdminRequests from '@/pages/admin/requests';
 
@@ -41,6 +42,7 @@ function Router() {
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/admin/providers" component={AdminProviders} />
       <Route path="/admin/models" component={AdminModels} />
+      <Route path="/admin/cache-pricing" component={AdminCachePricing} />
       <Route path="/admin/requests" component={AdminRequests} />
       
       <Route component={NotFound} />
