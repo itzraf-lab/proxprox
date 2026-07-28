@@ -672,7 +672,7 @@ router.post("/providers", async (req: AuthRequest, res) => {
  * PUT /api/admin/providers/:providerId
  * Replaces the provider's base URLs and keys entirely.
  */
-router.put("/providers/:providerId", (req, res) => {
+router.put("/providers/:providerId", async (req: AuthRequest, res) => {
   const { providerId } = req.params;
   const { name, type, loadBalancing, baseUrls } = req.body;
 
@@ -709,6 +709,26 @@ router.put("/providers/:providerId", (req, res) => {
 
   // Replace all base URLs and keys if provided
   if (Array.isArray(baseUrls)) {
+    // Snapshot existing encrypted key values so keys the client keeps
+    // (sent as { keyId } with no new secret) can be carried over verbatim.
+    const existingKeyRows = db
+      .prepare("SELECT id, key_value FROM provider_api_keys WHERE provider_id = ?")
+      .all(providerId) as Array<{ id: string; key_value: string }>;
+    const existingKeyById = new Map(existingKeyRows.map(r => [r.id, r.key_value]));
+
+    // Validate that every key either carries a new secret or references a
+    // known existing key. Reject before mutating anything.
+    for (const bu of baseUrls) {
+      for (const k of bu.keys ?? []) {
+        const hasNewKey = typeof k.key === "string" && k.key.trim() !== "";
+        const referencesExisting = k.keyId && existingKeyById.has(k.keyId);
+        if (!hasNewKey && !referencesExisting) {
+          res.status(400).json({ error: "Each API key must have a value" });
+          return;
+        }
+      }
+    }
+
     // Cascade delete handled by FK — deleting provider_base_urls removes their keys
     db.prepare("DELETE FROM provider_base_urls WHERE provider_id = ?").run(providerId);
 
@@ -721,10 +741,14 @@ router.put("/providers/:providerId", (req, res) => {
 
       if (Array.isArray(bu.keys)) {
         for (const k of bu.keys) {
+          const hasNewKey = typeof k.key === "string" && k.key.trim() !== "";
+          const keyValue = hasNewKey
+            ? encryptSecret(k.key)
+            : existingKeyById.get(k.keyId)!; // guaranteed present by validation above
           db.prepare(`
             INSERT INTO provider_api_keys (id, provider_id, base_url_id, key_value, label, priority, fail_count)
             VALUES (?, ?, ?, ?, ?, ?, 0)
-          `).run(uuidv4(), providerId, buId, encryptSecret(k.key), k.label ?? null, k.priority ?? 0);
+          `).run(uuidv4(), providerId, buId, keyValue, k.label ?? null, k.priority ?? 0);
         }
       }
     }
@@ -732,6 +756,60 @@ router.put("/providers/:providerId", (req, res) => {
 
   const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(providerId) as any;
   const modelCount = (db.prepare("SELECT COUNT(*) as c FROM models WHERE provider_id = ?").get(providerId) as any).c;
+
+  // Re-register this provider's models in LiteLLM so key/URL/routing changes
+  // take effect immediately (syncModelsToLiteLLM skips already-registered
+  // model names, so we must delete-then-re-add here).
+  if (isLiteLLMAvailable() && Array.isArray(baseUrls)) {
+    try {
+      const models = db
+        .prepare("SELECT * FROM models WHERE provider_id = ?")
+        .all(providerId) as any[];
+
+      // Rebuild the decrypted (base_url, key) topology from the freshly-saved rows.
+      const baseUrlRows = db
+        .prepare("SELECT * FROM provider_base_urls WHERE provider_id = ? ORDER BY priority ASC")
+        .all(providerId) as any[];
+      const decryptedBaseUrls = baseUrlRows.map((bu: any) => {
+        const keys = db
+          .prepare("SELECT * FROM provider_api_keys WHERE base_url_id = ? ORDER BY priority ASC")
+          .all(bu.id) as any[];
+        return {
+          url: bu.url ?? null,
+          priority: bu.priority ?? 1,
+          keys: keys.map((k: any) => ({ key: decryptSecret(k.key_value), priority: k.priority ?? 1 })),
+        };
+      });
+
+      const info = (await litellmListModels()) as any;
+      const registered = info.data ?? [];
+
+      for (const model of models) {
+        // Delete existing LiteLLM deployments for this model name.
+        for (const entry of registered.filter((m: any) => m.model_name === model.name)) {
+          await litellmDeleteModel(entry.model_info.id).catch(() => {});
+        }
+        // Re-add all deployments for enabled models.
+        if (model.enabled === 1) {
+          await registerModelDeployments(
+            {
+              name: model.name,
+              litellm_model: model.litellm_model,
+              type: provider.type,
+              input_cost_per_mtok: model.input_cost_per_mtok,
+              output_cost_per_mtok: model.output_cost_per_mtok,
+            },
+            decryptedBaseUrls,
+            provider.load_balancing,
+            req,
+          );
+        }
+      }
+    } catch (err) {
+      req.log?.warn({ err, providerId }, "LiteLLM re-sync after provider update failed");
+    }
+  }
+
   res.json(formatProvider(provider, Number(modelCount)));
 });
 

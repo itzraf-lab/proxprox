@@ -972,22 +972,35 @@ components:
         type:
           type: string
           enum: [openai, anthropic, custom]
-        baseUrl:
-          type: ["string", "null"]
         loadBalancing:
           type: string
           enum: [round_robin, priority]
-        apiKeys:
+        baseUrls:
           type: array
           items:
-            $ref: "#/components/schemas/ProviderApiKey"
+            $ref: "#/components/schemas/ProviderBaseUrl"
         modelCount:
           type: integer
         isActive:
           type: boolean
         createdAt:
           type: string
-      required: [id, name, type, loadBalancing, apiKeys, modelCount, isActive, createdAt]
+      required: [id, name, type, loadBalancing, baseUrls, modelCount, isActive, createdAt]
+
+    ProviderBaseUrl:
+      type: object
+      properties:
+        id:
+          type: string
+        url:
+          type: ["string", "null"]
+        priority:
+          type: integer
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderApiKey"
+      required: [id, priority, keys]
 
     ProviderApiKey:
       type: object
@@ -1015,6 +1028,19 @@ components:
           type: integer
       required: [key, priority]
 
+    ProviderBaseUrlInput:
+      type: object
+      properties:
+        url:
+          type: ["string", "null"]
+        priority:
+          type: integer
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderApiKeyInput"
+      required: [priority, keys]
+
     ProviderInput:
       type: object
       properties:
@@ -1023,16 +1049,14 @@ components:
         type:
           type: string
           enum: [openai, anthropic, custom]
-        baseUrl:
-          type: ["string", "null"]
         loadBalancing:
           type: string
           enum: [round_robin, priority]
-        apiKeys:
+        baseUrls:
           type: array
           items:
-            $ref: "#/components/schemas/ProviderApiKeyInput"
-      required: [name, type, loadBalancing, apiKeys]
+            $ref: "#/components/schemas/ProviderBaseUrlInput"
+      required: [name, type, loadBalancing, baseUrls]
 
     FetchModelsInput:
       type: object
@@ -1052,6 +1076,13 @@ components:
           type: string
         contextWindow:
           type: ["integer", "null"]
+        inputCostPerMtok:
+          type: ["number", "null"]
+        outputCostPerMtok:
+          type: ["number", "null"]
+        metaSource:
+          type: string
+          enum: [known, provider, unknown]
       required: [id, name]
 
     RequestsPage:

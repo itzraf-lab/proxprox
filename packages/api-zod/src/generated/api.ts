@@ -347,14 +347,18 @@ export const GetAdminProvidersResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "type": zod.enum(['openai', 'anthropic', 'custom']),
-  "baseUrl": zod.string().nullish(),
   "loadBalancing": zod.enum(['round_robin', 'priority']),
-  "apiKeys": zod.array(zod.object({
+  "baseUrls": zod.array(zod.object({
+  "id": zod.string(),
+  "url": zod.string().nullish(),
+  "priority": zod.number(),
+  "keys": zod.array(zod.object({
   "id": zod.string(),
   "label": zod.string().nullish(),
   "keyMasked": zod.string(),
   "priority": zod.number(),
   "failCount": zod.number()
+}))
 })),
   "modelCount": zod.number(),
   "isActive": zod.boolean(),
@@ -369,12 +373,15 @@ export const GetAdminProvidersResponse = zod.array(GetAdminProvidersResponseItem
 export const CreateAdminProviderBody = zod.object({
   "name": zod.string(),
   "type": zod.enum(['openai', 'anthropic', 'custom']),
-  "baseUrl": zod.string().nullish(),
   "loadBalancing": zod.enum(['round_robin', 'priority']),
-  "apiKeys": zod.array(zod.object({
+  "baseUrls": zod.array(zod.object({
+  "url": zod.string().nullish(),
+  "priority": zod.number(),
+  "keys": zod.array(zod.object({
   "key": zod.string(),
   "label": zod.string().nullish(),
   "priority": zod.number()
+}))
 }))
 })
 
@@ -382,14 +389,18 @@ export const CreateAdminProviderResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "type": zod.enum(['openai', 'anthropic', 'custom']),
-  "baseUrl": zod.string().nullish(),
   "loadBalancing": zod.enum(['round_robin', 'priority']),
-  "apiKeys": zod.array(zod.object({
+  "baseUrls": zod.array(zod.object({
+  "id": zod.string(),
+  "url": zod.string().nullish(),
+  "priority": zod.number(),
+  "keys": zod.array(zod.object({
   "id": zod.string(),
   "label": zod.string().nullish(),
   "keyMasked": zod.string(),
   "priority": zod.number(),
   "failCount": zod.number()
+}))
 })),
   "modelCount": zod.number(),
   "isActive": zod.boolean(),
@@ -407,12 +418,15 @@ export const UpdateAdminProviderParams = zod.object({
 export const UpdateAdminProviderBody = zod.object({
   "name": zod.string(),
   "type": zod.enum(['openai', 'anthropic', 'custom']),
-  "baseUrl": zod.string().nullish(),
   "loadBalancing": zod.enum(['round_robin', 'priority']),
-  "apiKeys": zod.array(zod.object({
+  "baseUrls": zod.array(zod.object({
+  "url": zod.string().nullish(),
+  "priority": zod.number(),
+  "keys": zod.array(zod.object({
   "key": zod.string(),
   "label": zod.string().nullish(),
   "priority": zod.number()
+}))
 }))
 })
 
@@ -420,14 +434,18 @@ export const UpdateAdminProviderResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "type": zod.enum(['openai', 'anthropic', 'custom']),
-  "baseUrl": zod.string().nullish(),
   "loadBalancing": zod.enum(['round_robin', 'priority']),
-  "apiKeys": zod.array(zod.object({
+  "baseUrls": zod.array(zod.object({
+  "id": zod.string(),
+  "url": zod.string().nullish(),
+  "priority": zod.number(),
+  "keys": zod.array(zod.object({
   "id": zod.string(),
   "label": zod.string().nullish(),
   "keyMasked": zod.string(),
   "priority": zod.number(),
   "failCount": zod.number()
+}))
 })),
   "modelCount": zod.number(),
   "isActive": zod.boolean(),
@@ -462,7 +480,10 @@ export const FetchProviderModelsBody = zod.object({
 export const FetchProviderModelsResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
-  "contextWindow": zod.number().nullish()
+  "contextWindow": zod.number().nullish(),
+  "inputCostPerMtok": zod.number().nullish(),
+  "outputCostPerMtok": zod.number().nullish(),
+  "metaSource": zod.enum(['known', 'provider', 'unknown']).optional()
 })
 export const FetchProviderModelsResponse = zod.array(FetchProviderModelsResponseItem)
 

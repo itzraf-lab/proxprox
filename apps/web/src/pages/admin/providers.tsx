@@ -12,11 +12,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Server, Plus, Trash2, KeyRound, Workflow, Zap, CheckSquare, Square,
-  Database, DollarSign, Link, ChevronDown, ChevronRight, AlertTriangle, Globe
+  Database, DollarSign, Link, ChevronDown, ChevronRight, AlertTriangle, Globe, Edit2
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
-import { ProviderInputType, ProviderInputLoadBalancing } from "@workspace/api-client-react"
+import { ProviderInputType, ProviderInputLoadBalancing, type Provider } from "@workspace/api-client-react"
 import { getToken } from "@/lib/api"
 
 interface FetchedModelInfo {
@@ -33,6 +33,10 @@ interface KeyEntry {
   key: string
   label: string
   priority: number
+  /** Original key ID when editing an existing provider */
+  _id?: string
+  /** True when this row represents a key already stored on the server */
+  _isExisting?: boolean
 }
 
 /** One base URL entry within the cluster */
@@ -133,13 +137,16 @@ function AdminProvidersContent() {
                   </div>
                   <CardTitle className="text-lg md:text-xl font-mono uppercase tracking-wider truncate">{provider.name}</CardTitle>
                 </div>
-                <Button
-                  variant="ghost" size="icon"
-                  onClick={() => handleDelete(provider.id)}
-                  className="text-destructive hover:bg-destructive/10 hover:text-destructive rounded-none shrink-0 ml-2"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-2">
+                  <EditProviderDialog provider={provider} />
+                  <Button
+                    variant="ghost" size="icon"
+                    onClick={() => handleDelete(provider.id)}
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive rounded-none shrink-0 ml-2"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="p-0 bg-sidebar/20 flex flex-col sm:flex-row">
                 {/* Cluster endpoint hierarchy */}
@@ -323,13 +330,13 @@ function AddProviderDialog() {
     })
   }
 
-  const toggleAll = () => {
+  const selectAll = () => {
     if (!fetchedModels) return
-    setSelectedIds(
-      selectedIds.size === fetchedModels.length
-        ? new Set()
-        : new Set(fetchedModels.map(m => m.id))
-    )
+    setSelectedIds(new Set(fetchedModels.map(m => m.id)))
+  }
+
+  const deselectAll = () => {
+    setSelectedIds(new Set())
   }
 
   const allSelected = fetchedModels != null && selectedIds.size === fetchedModels.length
@@ -635,11 +642,17 @@ function AddProviderDialog() {
                   <Zap className="h-3 w-3" /> Models to Expose
                 </Label>
                 {fetchedModels && fetchedModels.length > 0 && (
-                  <button type="button" onClick={toggleAll}
-                    className="font-mono text-[10px] uppercase text-muted-foreground hover:text-primary flex items-center gap-1">
-                    {allSelected ? <CheckSquare className="w-3 h-3" /> : <Square className="w-3 h-3" />}
-                    {allSelected ? "None" : "All"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={selectAll} disabled={allSelected}
+                      className="font-mono text-[10px] uppercase text-muted-foreground hover:text-primary disabled:opacity-40 disabled:hover:text-muted-foreground flex items-center gap-1">
+                      <CheckSquare className="w-3 h-3" /> All
+                    </button>
+                    <span className="text-muted-foreground/40 text-[10px]">|</span>
+                    <button type="button" onClick={deselectAll} disabled={selectedIds.size === 0}
+                      className="font-mono text-[10px] uppercase text-muted-foreground hover:text-primary disabled:opacity-40 disabled:hover:text-muted-foreground flex items-center gap-1">
+                      <Square className="w-3 h-3" /> None
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -669,9 +682,8 @@ function AddProviderDialog() {
                   </div>
                   <div className="space-y-1 max-h-[200px] overflow-y-auto mb-3">
                     {fetchedModels.map(m => (
-                      <div
+                      <label
                         key={m.id}
-                        onClick={() => toggleModel(m.id)}
                         className={`flex items-center gap-2 p-2 border cursor-pointer transition-colors hover:bg-sidebar/20
                           ${selectedIds.has(m.id) ? 'bg-primary/5 border-primary/30' : 'bg-background'}`}
                       >
@@ -679,7 +691,6 @@ function AddProviderDialog() {
                           checked={selectedIds.has(m.id)}
                           onCheckedChange={() => toggleModel(m.id)}
                           className="rounded-none shrink-0"
-                          onClick={e => e.stopPropagation()}
                         />
                         <div className="flex-1 min-w-0">
                           <div className="font-mono text-xs font-medium truncate">{m.name}</div>
@@ -695,7 +706,7 @@ function AddProviderDialog() {
                               : <span className="text-muted-foreground">—</span>}
                           </span>
                         </div>
-                      </div>
+                      </label>
                     ))}
                   </div>
                 </>
@@ -770,6 +781,362 @@ function AddProviderDialog() {
             </Button>
             <Button type="submit" className="rounded-none font-mono uppercase w-full sm:w-auto" disabled={isSaving || !name}>
               {isSaving ? "Saving..." : `Commit${totalCount > 0 ? ` (${totalCount})` : ''}`}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Edit Provider Dialog ──────────────────────────────────────────────────────
+
+function providerToBaseUrlEntries(provider: Provider): BaseUrlEntry[] {
+  const entries = provider.baseUrls.map(bu => ({
+    url: bu.url ?? "",
+    priority: bu.priority,
+    keys: bu.keys.map(k => ({
+      key: "",
+      label: k.label ?? "",
+      priority: k.priority,
+      _id: k.id,
+      _isExisting: true,
+    })),
+  }))
+  return entries.length > 0 ? entries : [defaultBaseUrlEntry(1)]
+}
+
+function EditProviderDialog({ provider }: { provider: Provider }) {
+  const [open, setOpen] = React.useState(false)
+  const [isSaving, setIsSaving] = React.useState(false)
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+
+  const [name, setName] = React.useState(provider.name)
+  const [type, setType] = React.useState<ProviderInputType>(provider.type)
+  const [lb, setLb] = React.useState<ProviderInputLoadBalancing>(provider.loadBalancing)
+  const [baseUrls, setBaseUrls] = React.useState<BaseUrlEntry[]>(() => providerToBaseUrlEntries(provider))
+  const [expandedBu, setExpandedBu] = React.useState<Set<number>>(new Set([0]))
+
+  const reset = () => {
+    setName(provider.name)
+    setType(provider.type)
+    setLb(provider.loadBalancing)
+    setBaseUrls(providerToBaseUrlEntries(provider))
+    setExpandedBu(new Set([0]))
+  }
+
+  // ── Base URL management ───────────────────────────────────────────────────
+
+  const addBaseUrl = () => {
+    const next = [...baseUrls, defaultBaseUrlEntry(baseUrls.length + 1)]
+    setBaseUrls(next)
+    setExpandedBu(prev => new Set([...prev, next.length - 1]))
+  }
+
+  const removeBaseUrl = (idx: number) => {
+    setBaseUrls(baseUrls.filter((_, i) => i !== idx))
+    setExpandedBu(prev => {
+      const next = new Set<number>()
+      prev.forEach(i => { if (i < idx) next.add(i); else if (i > idx) next.add(i - 1) })
+      return next
+    })
+  }
+
+  const updateBaseUrl = (idx: number, field: keyof BaseUrlEntry, value: any) => {
+    const next = [...baseUrls]
+    next[idx] = { ...next[idx], [field]: value }
+    setBaseUrls(next)
+  }
+
+  // ── Key management within a base URL ─────────────────────────────────────
+
+  const addKey = (buIdx: number) => {
+    const next = [...baseUrls]
+    next[buIdx] = {
+      ...next[buIdx],
+      keys: [...next[buIdx].keys, { key: "", label: "", priority: next[buIdx].keys.length + 1 }],
+    }
+    setBaseUrls(next)
+  }
+
+  const updateKey = (buIdx: number, kIdx: number, field: keyof KeyEntry, value: any) => {
+    const next = [...baseUrls]
+    const keys = [...next[buIdx].keys]
+    // Editing an existing key's secret makes it a replacement, not a passthrough.
+    if (field === "key") {
+      keys[kIdx] = { ...keys[kIdx], key: value, _isExisting: false }
+    } else {
+      keys[kIdx] = { ...keys[kIdx], [field]: value }
+    }
+    next[buIdx] = { ...next[buIdx], keys }
+    setBaseUrls(next)
+  }
+
+  const removeKey = (buIdx: number, kIdx: number) => {
+    const next = [...baseUrls]
+    next[buIdx] = { ...next[buIdx], keys: next[buIdx].keys.filter((_, i) => i !== kIdx) }
+    setBaseUrls(next)
+  }
+
+  // ── Submission ────────────────────────────────────────────────────────────
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name) return
+    for (const bu of baseUrls) {
+      // New keys (not carried over from the server) must have a value.
+      if (bu.keys.some(k => !k._isExisting && !k.key.trim())) {
+        toast({ title: "All new API key fields must be filled in", variant: "destructive" }); return
+      }
+      if (bu.keys.length === 0) {
+        toast({ title: "Each endpoint needs at least one API key", variant: "destructive" }); return
+      }
+      if (type === 'custom' && !bu.url.trim()) {
+        toast({ title: "All endpoints must have a URL for custom providers", variant: "destructive" }); return
+      }
+    }
+
+    setIsSaving(true)
+    try {
+      const token = getToken()
+      const res = await fetch(`/api/admin/providers/${provider.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          name,
+          type,
+          loadBalancing: lb,
+          baseUrls: baseUrls.map(bu => ({
+            url: type === 'custom' ? bu.url : null,
+            priority: bu.priority,
+            keys: bu.keys.map(k => ({
+              // Existing keys keep their stored secret via keyId; new/changed keys send the raw value.
+              key: k._isExisting ? undefined : k.key,
+              keyId: k._isExisting ? k._id : undefined,
+              label: k.label || undefined,
+              priority: k.priority,
+            })),
+          })),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        toast({ title: data?.error ?? "Failed to update provider", variant: "destructive" })
+      } else {
+        toast({ title: "Provider updated" })
+        queryClient.invalidateQueries({ queryKey: getGetAdminProvidersQueryKey() })
+        setOpen(false)
+      }
+    } catch (err: any) {
+      toast({ title: err.message ?? "Network error", variant: "destructive" })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const isCustom = type === 'custom'
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) reset() }}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost" size="icon"
+          className="text-muted-foreground hover:bg-accent hover:text-primary rounded-none shrink-0"
+        >
+          <Edit2 className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl rounded-none border-2 max-h-[92vh] overflow-y-auto p-4 md:p-6">
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <DialogHeader>
+            <DialogTitle className="font-mono uppercase tracking-wider text-lg">Edit Provider Cluster</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="font-mono text-xs uppercase tracking-wider">Provider Name</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} required
+                className="rounded-none bg-sidebar/10 font-mono" placeholder="e.g. OpenRouter Cluster" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="font-mono text-xs uppercase tracking-wider">Type</Label>
+                <Select value={type} onValueChange={(v) => setType(v as ProviderInputType)}>
+                  <SelectTrigger className="rounded-none bg-sidebar/10 font-mono text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none border-2">
+                    <SelectItem value="openai" className="font-mono">OpenAI</SelectItem>
+                    <SelectItem value="anthropic" className="font-mono">Anthropic</SelectItem>
+                    <SelectItem value="custom" className="font-mono">Custom</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="font-mono text-xs uppercase tracking-wider">Routing</Label>
+                <Select value={lb} onValueChange={(v) => setLb(v as ProviderInputLoadBalancing)}>
+                  <SelectTrigger className="rounded-none bg-sidebar/10 font-mono text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none border-2">
+                    <SelectItem value="round_robin" className="font-mono">Round Robin</SelectItem>
+                    <SelectItem value="priority" className="font-mono">Priority</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Cluster endpoints */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="font-mono text-xs uppercase tracking-wider text-primary flex items-center gap-1.5">
+                  <Globe className="h-3 w-3" /> Cluster Endpoints
+                </Label>
+                <Button type="button" variant="outline" size="sm"
+                  className="rounded-none font-mono text-[10px] uppercase h-6 px-2"
+                  onClick={addBaseUrl}>
+                  <Plus className="w-3 h-3 mr-1" /> Endpoint
+                </Button>
+              </div>
+
+              <div className="flex items-start gap-2 p-2 bg-sidebar/20 border text-muted-foreground">
+                <KeyRound className="h-3 w-3 mt-0.5 shrink-0" />
+                <p className="font-mono text-[10px] leading-relaxed">
+                  Existing keys stay unchanged unless you type a new value. Leave a key blank to keep it as-is.
+                </p>
+              </div>
+
+              {baseUrls.length > 1 && (
+                <div className="flex items-start gap-2 p-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                  <p className="font-mono text-[10px] leading-relaxed">
+                    All endpoints in a cluster must expose the <strong>exact same model IDs</strong>. LiteLLM will load-balance and fail-over across endpoints.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {baseUrls.map((bu, buIdx) => {
+                  const isExpanded = expandedBu.has(buIdx)
+                  return (
+                    <div key={buIdx} className="border bg-background">
+                      <div className="flex items-center gap-2 p-2 bg-sidebar/10 border-b">
+                        <button type="button" onClick={() => {
+                          setExpandedBu(prev => {
+                            const next = new Set(prev)
+                            isExpanded ? next.delete(buIdx) : next.add(buIdx)
+                            return next
+                          })
+                        }} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
+                          {isExpanded
+                            ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                            : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                          <Badge variant="outline" className="rounded-none font-mono text-[9px] shrink-0">EP{buIdx + 1}</Badge>
+                          <span className="font-mono text-xs text-muted-foreground truncate">
+                            {bu.url || (isCustom ? "no URL set" : "default endpoint")}
+                          </span>
+                          <span className="font-mono text-[9px] text-muted-foreground shrink-0 ml-auto mr-1">
+                            {bu.keys.length} key{bu.keys.length !== 1 ? 's' : ''}
+                          </span>
+                        </button>
+                        {baseUrls.length > 1 && (
+                          <Button type="button" variant="ghost" size="icon"
+                            className="h-5 w-5 text-destructive rounded-none shrink-0"
+                            onClick={() => removeBaseUrl(buIdx)}>
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        )}
+                      </div>
+
+                      {isExpanded && (
+                        <div className="p-2 space-y-2">
+                          {isCustom && (
+                            <div className="flex gap-2">
+                              <div className="flex-1 space-y-1">
+                                <Label className="font-mono text-[10px] uppercase text-muted-foreground flex items-center gap-1">
+                                  <Link className="h-2.5 w-2.5" /> Base URL
+                                </Label>
+                                <Input
+                                  value={bu.url}
+                                  onChange={e => updateBaseUrl(buIdx, 'url', e.target.value)}
+                                  placeholder="https://api.example.com/v1"
+                                  className="rounded-none h-7 font-mono text-xs"
+                                  required={isCustom}
+                                />
+                              </div>
+                              {lb === 'priority' && (
+                                <div className="w-16 space-y-1">
+                                  <Label className="font-mono text-[10px] uppercase text-muted-foreground">Priority</Label>
+                                  <Input type="number" min="1" value={bu.priority}
+                                    onChange={e => updateBaseUrl(buIdx, 'priority', parseInt(e.target.value) || 1)}
+                                    className="rounded-none h-7 font-mono text-xs" />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <Label className="font-mono text-[10px] uppercase text-muted-foreground flex items-center gap-1">
+                                <KeyRound className="h-2.5 w-2.5" /> API Keys
+                              </Label>
+                              <button type="button"
+                                className="font-mono text-[9px] uppercase text-primary hover:underline flex items-center gap-0.5"
+                                onClick={() => addKey(buIdx)}>
+                                <Plus className="w-2.5 h-2.5" /> Key
+                              </button>
+                            </div>
+                            {bu.keys.map((k, kIdx) => (
+                              <div key={kIdx} className="flex gap-1.5 items-start pl-2 border-l-2 border-primary/20">
+                                <div className="flex-1 space-y-1 min-w-0">
+                                  <Input
+                                    type="password"
+                                    value={k.key}
+                                    onChange={e => updateKey(buIdx, kIdx, 'key', e.target.value)}
+                                    placeholder={k._isExisting ? "•••••••• (unchanged — type to replace)" : "sk-..."}
+                                    required={!k._isExisting}
+                                    className="rounded-none h-7 font-mono text-xs"
+                                  />
+                                  <div className="flex gap-1.5">
+                                    <Input
+                                      value={k.label}
+                                      onChange={e => updateKey(buIdx, kIdx, 'label', e.target.value)}
+                                      placeholder="Label (opt)"
+                                      className="rounded-none h-6 font-mono text-[10px] flex-1"
+                                    />
+                                    {lb === 'priority' && (
+                                      <Input
+                                        type="number" min="1" value={k.priority}
+                                        onChange={e => updateKey(buIdx, kIdx, 'priority', parseInt(e.target.value) || 1)}
+                                        className="rounded-none h-6 font-mono text-[10px] w-12 shrink-0"
+                                        placeholder="P"
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                                {bu.keys.length > 1 && (
+                                  <Button type="button" variant="ghost" size="icon"
+                                    className="h-7 w-7 text-destructive rounded-none shrink-0"
+                                    onClick={() => removeKey(buIdx, kIdx)}>
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="border-t pt-4 flex-col sm:flex-row gap-2">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} className="rounded-none font-mono uppercase w-full sm:w-auto">
+              Cancel
+            </Button>
+            <Button type="submit" className="rounded-none font-mono uppercase w-full sm:w-auto" disabled={isSaving || !name}>
+              {isSaving ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
         </form>

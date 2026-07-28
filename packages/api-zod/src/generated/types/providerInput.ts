@@ -5,15 +5,13 @@
  * Qillin AI Proxy API
  * OpenAPI spec version: 0.1.0
  */
-import type { ProviderApiKeyInput } from './providerApiKeyInput';
+import type { ProviderBaseUrlInput } from './providerBaseUrlInput';
 import type { ProviderInputLoadBalancing } from './providerInputLoadBalancing';
 import type { ProviderInputType } from './providerInputType';
 
 export interface ProviderInput {
   name: string;
   type: ProviderInputType;
-  /** @nullable */
-  baseUrl?: string | null;
   loadBalancing: ProviderInputLoadBalancing;
-  apiKeys: ProviderApiKeyInput[];
+  baseUrls: ProviderBaseUrlInput[];
 }

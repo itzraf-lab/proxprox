@@ -5,7 +5,7 @@
  * Qillin AI Proxy API
  * OpenAPI spec version: 0.1.0
  */
-import type { ProviderApiKey } from './providerApiKey';
+import type { ProviderBaseUrl } from './providerBaseUrl';
 import type { ProviderLoadBalancing } from './providerLoadBalancing';
 import type { ProviderType } from './providerType';
 
@@ -13,10 +13,8 @@ export interface Provider {
   id: string;
   name: string;
   type: ProviderType;
-  /** @nullable */
-  baseUrl?: string | null;
   loadBalancing: ProviderLoadBalancing;
-  apiKeys: ProviderApiKey[];
+  baseUrls: ProviderBaseUrl[];
   modelCount: number;
   isActive: boolean;
   createdAt: string;

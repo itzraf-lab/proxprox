@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
+import { ErrorBoundary } from '@/components/error-boundary';
 
 import Home from '@/pages/home';
 import Login from '@/pages/login';
@@ -52,12 +53,14 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-        <Router />
-      </WouterRouter>
-      <Toaster />
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <Router />
+        </WouterRouter>
+        <Toaster />
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

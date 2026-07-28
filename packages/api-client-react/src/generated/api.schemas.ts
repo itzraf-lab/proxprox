@@ -244,14 +244,20 @@ export interface ProviderApiKey {
   failCount: number;
 }
 
+export interface ProviderBaseUrl {
+  id: string;
+  /** @nullable */
+  url?: string | null;
+  priority: number;
+  keys: ProviderApiKey[];
+}
+
 export interface Provider {
   id: string;
   name: string;
   type: ProviderType;
-  /** @nullable */
-  baseUrl?: string | null;
   loadBalancing: ProviderLoadBalancing;
-  apiKeys: ProviderApiKey[];
+  baseUrls: ProviderBaseUrl[];
   modelCount: number;
   isActive: boolean;
   createdAt: string;
@@ -262,6 +268,13 @@ export interface ProviderApiKeyInput {
   /** @nullable */
   label?: string | null;
   priority: number;
+}
+
+export interface ProviderBaseUrlInput {
+  /** @nullable */
+  url?: string | null;
+  priority: number;
+  keys: ProviderApiKeyInput[];
 }
 
 export type ProviderInputType = typeof ProviderInputType[keyof typeof ProviderInputType];
@@ -284,10 +297,8 @@ export const ProviderInputLoadBalancing = {
 export interface ProviderInput {
   name: string;
   type: ProviderInputType;
-  /** @nullable */
-  baseUrl?: string | null;
   loadBalancing: ProviderInputLoadBalancing;
-  apiKeys: ProviderApiKeyInput[];
+  baseUrls: ProviderBaseUrlInput[];
 }
 
 export interface FetchModelsInput {
@@ -296,11 +307,25 @@ export interface FetchModelsInput {
   baseUrl?: string | null;
 }
 
+export type FetchedModelMetaSource = typeof FetchedModelMetaSource[keyof typeof FetchedModelMetaSource];
+
+
+export const FetchedModelMetaSource = {
+  known: 'known',
+  provider: 'provider',
+  unknown: 'unknown',
+} as const;
+
 export interface FetchedModel {
   id: string;
   name: string;
   /** @nullable */
   contextWindow?: number | null;
+  /** @nullable */
+  inputCostPerMtok?: number | null;
+  /** @nullable */
+  outputCostPerMtok?: number | null;
+  metaSource?: FetchedModelMetaSource;
 }
 
 export interface RequestsPage {

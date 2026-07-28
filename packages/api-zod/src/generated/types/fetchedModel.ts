@@ -5,10 +5,16 @@
  * Qillin AI Proxy API
  * OpenAPI spec version: 0.1.0
  */
+import type { FetchedModelMetaSource } from './fetchedModelMetaSource';
 
 export interface FetchedModel {
   id: string;
   name: string;
   /** @nullable */
   contextWindow?: number | null;
+  /** @nullable */
+  inputCostPerMtok?: number | null;
+  /** @nullable */
+  outputCostPerMtok?: number | null;
+  metaSource?: FetchedModelMetaSource;
 }
