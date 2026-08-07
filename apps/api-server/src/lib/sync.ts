@@ -9,12 +9,14 @@
 import { db } from "../db/index.js";
 import {
   litellmAddModel,
+  litellmDeleteModel,
   litellmListModels,
   litellmUpdateUser,
   isLiteLLMAvailable,
 } from "./litellm.js";
 import { logger } from "./logger.js";
 import { decryptSecret } from "./crypto.js";
+import { resolveCacheCostPerToken } from "./pricing.js";
 
 /**
  * Build the litellm_params.model string for a given provider type.
@@ -124,6 +126,131 @@ function getModelDeployments(): ModelDeployment[] {
   `).all() as ModelDeployment[];
 }
 
+interface ExistingDeployment {
+  id: string;
+  modelName: string;
+  params: Record<string, unknown>;
+}
+
+/**
+ * Fetch every deployment currently registered in LiteLLM, grouped by
+ * model_name. Returns null when LiteLLM can't be reached.
+ */
+async function getExistingDeployments(): Promise<Map<string, ExistingDeployment[]> | null> {
+  try {
+    const info = (await litellmListModels()) as any;
+    const byName = new Map<string, ExistingDeployment[]>();
+    for (const m of info.data ?? []) {
+      const name = String(m.model_name);
+      const entry: ExistingDeployment = {
+        id: m.model_info?.id,
+        modelName: name,
+        params: m.litellm_params ?? {},
+      };
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name)!.push(entry);
+    }
+    return byName;
+  } catch {
+    return null;
+  }
+}
+
+/** Tolerant float compare for per-token cost params (values ~1e-8..1e-5). */
+function costMatches(actual: unknown, expected: number | undefined): boolean {
+  const a = typeof actual === "number" && Number.isFinite(actual) ? actual : 0;
+  const e = expected ?? 0;
+  return Math.abs(a - e) <= Math.max(1e-12, 1e-9 * Math.max(Math.abs(a), Math.abs(e)));
+}
+
+/**
+ * Expected LiteLLM cost params for a model, derived from the Qillin catalog
+ * price and the admin-configured cache pricing. This is what makes LiteLLM's
+ * response_cost the single source of truth for spend — including cached
+ * requests.
+ */
+function expectedCostParams(inputCostPerMtok: number | null, outputCostPerMtok: number | null) {
+  const inputPerToken = inputCostPerMtok != null ? inputCostPerMtok / 1_000_000 : undefined;
+  const outputPerToken = outputCostPerMtok != null ? outputCostPerMtok / 1_000_000 : undefined;
+  const cache = resolveCacheCostPerToken(inputCostPerMtok ?? 0);
+  return {
+    inputCostPerToken: inputPerToken,
+    outputCostPerToken: outputPerToken,
+    cacheWriteCostPerToken: cache.cacheWriteCostPerToken,
+    cacheReadCostPerToken: cache.cacheReadCostPerToken,
+  };
+}
+
+/**
+ * A registered deployment is pricing-stale when any of its cost params
+ * differ from what Qillin would push today (covers cache-pricing changes and
+ * deployments registered before cache costs were pushed at all).
+ */
+function isPricingStale(existing: ExistingDeployment[], expected: ReturnType<typeof expectedCostParams>): boolean {
+  if (existing.length === 0) return false;
+  return existing.some(
+    (e) =>
+      !costMatches(e.params.input_cost_per_token, expected.inputCostPerToken) ||
+      !costMatches(e.params.output_cost_per_token, expected.outputCostPerToken) ||
+      !costMatches(e.params.cache_creation_input_token_cost, expected.cacheWriteCostPerToken) ||
+      !costMatches(e.params.cache_read_input_token_cost, expected.cacheReadCostPerToken),
+  );
+}
+
+/**
+ * Register every (base_url, key) deployment for one model in LiteLLM with
+ * current pricing. Returns the number of deployments successfully added.
+ */
+async function registerDeploymentsForModel(
+  modelName: string,
+  deps: ModelDeployment[],
+): Promise<{ added: number; failed: number }> {
+  const minUrlPriority = Math.min(...deps.map((d) => d.url_priority));
+  const minKeyPriorityForMinUrl = Math.min(
+    ...deps.filter((d) => d.url_priority === minUrlPriority).map((d) => d.key_priority),
+  );
+
+  let added = 0;
+  let failed = 0;
+  for (const d of deps) {
+    if (!d.key_value) continue; // skip if no key
+    const weight = computeDeploymentWeight({
+      loadBalancing: d.load_balancing,
+      urlPriority: d.url_priority,
+      keyPriority: d.key_priority,
+      minUrlPriority,
+      minKeyPriorityForMinUrl,
+    });
+    try {
+      await litellmAddModel({
+        modelName,
+        litellmParams: {
+          model: litellmModelString(d.litellm_model, d.type),
+          apiBase: d.base_url ?? undefined,
+          apiKey: decryptSecret(d.key_value),
+          ...expectedCostParams(d.input_cost_per_mtok, d.output_cost_per_mtok),
+          weight,
+        },
+      });
+      added++;
+    } catch (err) {
+      logger.warn({ err, model: modelName, base_url: d.base_url }, "[sync] Failed to register deployment in LiteLLM");
+      failed++;
+    }
+  }
+  return { added, failed };
+}
+
+/** Delete every LiteLLM deployment registered under a model_name. */
+async function deleteDeploymentsForModel(existing: ExistingDeployment[]): Promise<void> {
+  for (const e of existing) {
+    if (!e.id) continue;
+    await litellmDeleteModel(e.id).catch((err) =>
+      logger.warn({ err, model: e.modelName, id: e.id }, "[sync] Failed to delete stale deployment"),
+    );
+  }
+}
+
 export async function syncModelsToLiteLLM(): Promise<void> {
   if (!isLiteLLMAvailable()) {
     logger.info("[sync] LITELLM_MASTER_KEY not set — skipping model sync");
@@ -137,18 +264,15 @@ export async function syncModelsToLiteLLM(): Promise<void> {
     return;
   }
 
-  // Fetch model names already registered in LiteLLM
-  let knownNames: Set<string> = new Set();
-  try {
-    const info = await litellmListModels() as any;
-    knownNames = new Set((info.data ?? []).map((m: any) => String(m.model_name)));
-  } catch (err) {
-    logger.warn({ err }, "[sync] Could not fetch LiteLLM model list, will register all");
+  // Fetch deployments already registered in LiteLLM, grouped by model_name.
+  const existingByName = await getExistingDeployments();
+  if (existingByName === null) {
+    logger.warn("[sync] Could not fetch LiteLLM model list, will register all");
   }
 
   const deployments = getModelDeployments();
 
-  // Group deployments by model name; skip models already registered in LiteLLM
+  // Group deployments by model name
   const byModel = new Map<string, ModelDeployment[]>();
   for (const d of deployments) {
     if (!byModel.has(d.name)) byModel.set(d.name, []);
@@ -156,64 +280,78 @@ export async function syncModelsToLiteLLM(): Promise<void> {
   }
 
   let registered = 0;
+  let repriced = 0;
   let skipped = 0;
   let failed = 0;
 
   for (const [modelName, deps] of byModel.entries()) {
-    if (knownNames.has(modelName)) {
-      skipped++;
+    const existing = existingByName?.get(modelName) ?? [];
+    const expected = expectedCostParams(
+      deps[0]?.input_cost_per_mtok ?? null,
+      deps[0]?.output_cost_per_mtok ?? null,
+    );
+
+    if (existingByName !== null && existing.length > 0) {
+      // Already registered — only re-register when pricing drifted (e.g.
+      // cache pricing changed, or the deployment predates cache-cost push).
+      if (!isPricingStale(existing, expected)) {
+        skipped++;
+        continue;
+      }
+      await deleteDeploymentsForModel(existing);
+      const res = await registerDeploymentsForModel(modelName, deps);
+      failed += res.failed;
+      if (res.added > 0) repriced++;
       continue;
     }
 
-    // Compute the primary-tier floor for priority providers:
-    // lowest url_priority, then lowest key_priority within that url.
-    const minUrlPriority = Math.min(...deps.map((d) => d.url_priority));
-    const minKeyPriorityForMinUrl = Math.min(
-      ...deps.filter((d) => d.url_priority === minUrlPriority).map((d) => d.key_priority),
-    );
-
-    // Register every (base_url, key) deployment for this model.
-    // LiteLLM treats multiple entries with the same model_name as a pool
-    // and load-balances / fails-over across them automatically.
-    let modelRegistered = false;
-    for (const d of deps) {
-      if (!d.key_value) continue; // skip if no key
-      const weight = computeDeploymentWeight({
-        loadBalancing: d.load_balancing,
-        urlPriority: d.url_priority,
-        keyPriority: d.key_priority,
-        minUrlPriority,
-        minKeyPriorityForMinUrl,
-      });
-      try {
-        await litellmAddModel({
-          modelName: d.name,
-          litellmParams: {
-            model: litellmModelString(d.litellm_model, d.type),
-            apiBase: d.base_url ?? undefined,
-            apiKey: decryptSecret(d.key_value),
-            inputCostPerToken:
-              d.input_cost_per_mtok != null ? d.input_cost_per_mtok / 1_000_000 : undefined,
-            outputCostPerToken:
-              d.output_cost_per_mtok != null ? d.output_cost_per_mtok / 1_000_000 : undefined,
-            weight,
-          },
-        });
-        modelRegistered = true;
-      } catch (err) {
-        logger.warn({ err, model: d.name, base_url: d.base_url }, "[sync] Failed to register deployment in LiteLLM");
-        failed++;
-      }
-    }
-    if (modelRegistered) registered++;
+    const res = await registerDeploymentsForModel(modelName, deps);
+    failed += res.failed;
+    if (res.added > 0) registered++;
   }
 
   logger.info(
-    { registered, skipped, failed, totalModels: byModel.size },
+    { registered, repriced, skipped, failed, totalModels: byModel.size },
     "[sync] Model sync complete"
   );
 
   await reconcileUserBudgets();
+}
+
+/**
+ * Force-re-register every enabled model's deployments with current pricing.
+ * Called when the admin changes cache pricing so the new rates take effect
+ * in LiteLLM immediately (without waiting for a restart).
+ */
+export async function resyncModelPricingToLiteLLM(): Promise<void> {
+  if (!isLiteLLMAvailable()) return;
+
+  const existingByName = await getExistingDeployments();
+  if (existingByName === null) {
+    logger.warn("[sync] LiteLLM unreachable — cache pricing will apply on next restart");
+    return;
+  }
+
+  const deployments = getModelDeployments();
+  const byModel = new Map<string, ModelDeployment[]>();
+  for (const d of deployments) {
+    if (!byModel.has(d.name)) byModel.set(d.name, []);
+    byModel.get(d.name)!.push(d);
+  }
+
+  let repriced = 0;
+  let failed = 0;
+  for (const [modelName, deps] of byModel.entries()) {
+    const existing = existingByName.get(modelName) ?? [];
+    if (existing.length > 0) {
+      await deleteDeploymentsForModel(existing);
+    }
+    const res = await registerDeploymentsForModel(modelName, deps);
+    failed += res.failed;
+    if (res.added > 0) repriced++;
+  }
+
+  logger.info({ repriced, failed, totalModels: byModel.size }, "[sync] Model pricing resync complete");
 }
 
 /**

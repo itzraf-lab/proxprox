@@ -78,7 +78,7 @@ function AdminDashboardContent() {
                     />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'hsl(var(--card))', borderRadius: '0', border: '2px solid hsl(var(--border))', fontFamily: 'var(--font-mono)', fontSize: 12 }}
-                      labelFormatter={(val) => new Date(val).toLocaleDateString()}
+                      labelFormatter={(val) => new Date(val as string).toLocaleDateString()}
                       formatter={(val: number) => [`${val.toFixed(4)} Qr`, 'Spend']}
                     />
                     <Area

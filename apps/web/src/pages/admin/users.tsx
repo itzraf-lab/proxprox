@@ -217,8 +217,18 @@ function CreditsForm({ user, onClose }: { user: AdminUser; onClose: () => void }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const numAmount = parseFloat(amount)
-    if (isNaN(numAmount) || numAmount <= 0) return
+    // Number() is strict — unlike parseFloat it rejects trailing garbage
+    // ("10abc" → NaN instead of silently becoming 10).
+    const numAmount = amount.trim() === "" ? NaN : Number(amount)
+    // Zero is valid for "set" (Override Total to 0); for add/subtract it's a
+    // pointless no-op. Either way, surface feedback instead of failing silently.
+    if (isNaN(numAmount) || !Number.isFinite(numAmount) || numAmount < 0 || (operation !== 'set' && numAmount === 0)) {
+      toast({
+        title: operation === 'set' ? "Enter a valid amount (0 or greater)" : "Enter a valid amount (greater than 0)",
+        variant: "destructive",
+      })
+      return
+    }
     addCredits.mutate(
       { userId: user.id, data: { amount: numAmount, operation } },
       {

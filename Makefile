@@ -7,10 +7,12 @@ PY := $(VENV)/bin/python
 # Prefix that loads .env into a recipe's shell.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
-.PHONY: help install setup-python db-setup typecheck build proxy api web dev
+.PHONY: help setup update install setup-python db-setup typecheck build proxy api web dev
 
 help:
 	@echo "Qillin targets:"
+	@echo "  make setup         One-command setup on a fresh Linux machine (scripts/setup.sh)"
+	@echo "  make update        Update all deps to the latest versions (scripts/update.sh)"
 	@echo "  make install       Install Node deps (pnpm) + Python venv for LiteLLM"
 	@echo "                     (uses uv if available, else system python3 + pip)"
 	@echo "  make db-setup      Create the local PostgreSQL role + database for LiteLLM"
@@ -22,6 +24,16 @@ help:
 	@echo "  make dev           Run all three services together"
 
 # ── Setup ────────────────────────────────────────────────────────────────
+# One-command setup for a fresh Linux machine (system packages, Node 24,
+# pnpm, uv, PostgreSQL, .env with generated secrets, dependencies).
+setup:
+	./scripts/setup.sh
+
+# Update all dependencies to their latest versions (Node + Python/LiteLLM),
+# then type-check the workspace.
+update:
+	./scripts/update.sh
+
 install: setup-python
 	pnpm install
 
@@ -29,12 +41,18 @@ install: setup-python
 # Without uv: falls back to the system python3 + venv + pip, so any machine with
 # a stock Python 3.10+ works. On Debian/Ubuntu that requires the python3-venv
 # apt package (otherwise `python3 -m venv` cannot bootstrap pip).
+# The skip-check also probes fastapi.dependencies.utils.get_flat_dependant:
+# litellm 1.95.0 needs that private symbol, which FastAPI removed in 0.140.7
+# (see the pin in apps/litellm-proxy/requirements.txt). A venv created while an
+# incompatible fastapi was installed fails the probe and gets re-provisioned
+# instead of crashing the proxy at import time. Remove the probe when the pin
+# is lifted.
 setup-python:
 	@if command -v uv >/dev/null 2>&1; then \
 		echo ">> uv detected — setting up LiteLLM venv with uv (Python 3.13)"; \
 		test -d $(VENV) || uv venv --python 3.13 $(VENV); \
 		uv pip install --python $(VENV) -r apps/litellm-proxy/requirements.txt; \
-	elif [ -d $(VENV) ] && $(PY) -c 'import litellm, prisma, uvicorn' >/dev/null 2>&1; then \
+	elif [ -d $(VENV) ] && $(PY) -c 'import litellm, prisma, uvicorn; from fastapi.dependencies.utils import get_flat_dependant' >/dev/null 2>&1; then \
 		echo ">> $(VENV) already has the LiteLLM Python deps — skipping."; \
 		echo "   To rebuild from scratch: rm -rf $(VENV) && make setup-python"; \
 	else \

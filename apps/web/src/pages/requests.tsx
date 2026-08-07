@@ -2,7 +2,7 @@ import * as React from "react"
 import { useState, useMemo } from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
-import { useGetUserRequests, useGetUserUsage } from "@workspace/api-client-react"
+import { useGetUserRequests, useGetUserUsage, getGetUserRequestsQueryKey } from "@workspace/api-client-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatCurrency, formatNumber, formatTokens } from "@/lib/utils"
 import { Activity, TerminalSquare, DollarSign, ChevronLeft, ChevronRight, Loader2, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { keepPreviousData } from "@tanstack/react-query"
 
 export default function Requests() {
   return (
@@ -33,12 +34,17 @@ function RequestsContent() {
     ...(model !== "all" ? { model } : {})
   }
   
-  const { data: requestsPage, isLoading } = useGetUserRequests(queryParams)
+  // Keep the previous page's rows visible while the next page loads —
+  // prevents a full-table spinner flash on every pagination click.
+  const { data: requestsPage, isLoading, isPlaceholderData } = useGetUserRequests(
+    queryParams,
+    { query: { placeholderData: keepPreviousData, queryKey: getGetUserRequestsQueryKey(queryParams) } }
+  )
 
   // Extract unique models from the usage stats to populate filter
   const availableModels = useMemo(() => {
     if (!usage?.modelBreakdown) return []
-    return usage.modelBreakdown.map(m => m.modelName)
+    return [...new Set(usage.modelBreakdown.map(m => m.modelName))]
   }, [usage])
 
   return (
@@ -100,7 +106,7 @@ function RequestsContent() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className={`overflow-x-auto transition-opacity ${isPlaceholderData ? "opacity-60" : ""}`}>
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent bg-sidebar/50">

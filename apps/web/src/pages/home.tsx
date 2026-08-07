@@ -4,8 +4,10 @@ import { Button } from "@/components/ui/button"
 import { Link } from "wouter"
 import { Activity, EyeOff, KeyRound, Route, ShieldCheck, Terminal } from "lucide-react"
 import { ComplianceBadges } from "@/components/compliance-badges"
+import { getOpenAiBaseUrl } from "@/lib/url"
 
 export default function Home() {
+  const chatCompletionsUrl = `${getOpenAiBaseUrl()}/chat/completions`
   return (
     <Shell>
       <div className="flex-1 overflow-y-auto">
@@ -14,12 +16,12 @@ export default function Home() {
           <div className="mx-auto max-w-7xl px-6 pb-16 pt-10 sm:pb-24 lg:flex lg:items-center lg:gap-x-12 lg:px-8 lg:py-32">
             <div className="max-w-2xl lg:max-w-xl lg:flex-1 lg:min-w-0">
               <div className="mt-16 sm:mt-24 lg:mt-16">
-                <a href="#" className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-1 rounded-full text-xs font-semibold">
+                <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-1 rounded-full text-xs font-semibold">
                   <span className="text-primary font-mono bg-primary/10 px-2 py-0.5 rounded-full">v0.1.0-beta</span>
                   <span className="text-muted-foreground flex items-center">
                     Zero message logging
                   </span>
-                </a>
+                </span>
               </div>
               <h1 className="mt-10 text-4xl font-bold tracking-tight text-foreground sm:text-6xl uppercase">
                 One API Key. <br />
@@ -44,7 +46,7 @@ export default function Home() {
               <div className="w-full max-w-xl mx-auto lg:mx-0 lg:max-w-[600px] rounded-md bg-sidebar/50 border p-2 ring-1 ring-inset ring-sidebar-border lg:rounded-2xl lg:p-4">
                 <div className="rounded-md bg-card p-4 sm:p-6 border shadow-2xl overflow-x-auto">
                   <div className="flex items-center justify-between border-b pb-4 mb-4">
-                    <div className="flex gap-2">
+                    <div className="flex gap-2" aria-hidden="true">
                       <div className="w-3 h-3 rounded-full bg-destructive"></div>
                       <div className="w-3 h-3 rounded-full bg-amber-500"></div>
                       <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
@@ -52,13 +54,13 @@ export default function Home() {
                     <div className="font-mono text-xs text-muted-foreground">TERMINAL</div>
                   </div>
                   <pre className="text-xs sm:text-sm font-mono text-foreground">
-                    <code className="block text-primary mb-2 whitespace-pre">$ curl -X POST https://your-domain/v1/chat/completions \</code>
+                    <code className="block text-primary mb-2 whitespace-pre">$ curl -X POST {chatCompletionsUrl} \</code>
                     <code className="block ml-4 text-muted-foreground whitespace-pre">-H "Authorization: Bearer sk-qillin-..." \</code>
                     <code className="block ml-4 text-muted-foreground whitespace-pre">-H "Content-Type: application/json" \</code>
-                    <code className="block ml-4 text-muted-foreground whitespace-pre">-d '{'{'}</code>
+                    <code className="block ml-4 text-muted-foreground whitespace-pre">{"-d '{"}</code>
                     <code className="block ml-8 text-muted-foreground whitespace-pre">"model": "any-model-you-configure",</code>
                     <code className="block ml-8 text-muted-foreground whitespace-pre">"messages": [...]</code>
-                    <code className="block ml-4 text-muted-foreground whitespace-pre">{'}'}'</code>
+                    <code className="block ml-4 text-muted-foreground whitespace-pre">{"}'"}</code>
                     <code className="block text-emerald-500 mt-4 whitespace-pre">200 OK</code>
                     <code className="block text-muted-foreground mt-2 whitespace-pre">{'// Routed to your configured provider'}</code>
                     <code className="block text-muted-foreground whitespace-pre">{'// Message content: never stored'}</code>
@@ -110,7 +112,7 @@ export default function Home() {
               single, standard OpenAI-compatible endpoint you control end to end.
             </p>
           </div>
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col border p-6 bg-card">
               <dt className="flex items-center gap-x-3 text-base font-semibold leading-7 text-foreground font-mono uppercase">
                 <Route className="h-5 w-5 flex-none text-primary" aria-hidden="true" />
@@ -147,7 +149,7 @@ export default function Home() {
                 <p className="flex-auto">Every token you use is tracked and converted to Qredits (1 Qr = $1), so you always know exactly what you've spent.</p>
               </dd>
             </div>
-          </div>
+          </dl>
         </div>
 
         {/* Compliance footer */}

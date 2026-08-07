@@ -1,7 +1,9 @@
 import * as React from "react"
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+// Remove dismissed toasts from state after 5s (the shadcn template shipped
+// with 1_000_000ms ≈ 16.7 minutes, which kept dead toasts in React state).
+const TOAST_REMOVE_DELAY = 5000
 
 type ToasterToast = {
   id: string

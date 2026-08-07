@@ -1,5 +1,5 @@
 /**
- * Cache-pricing resolution and request spend computation.
+ * Cache-pricing resolution for LiteLLM deployment registration.
  *
  * Administrators may configure custom per-million-token prices for prompt-cache
  * write and cache read operations independently (stored in the `settings`
@@ -12,6 +12,11 @@
  *
  * Each side (write / read) resolves independently, so an admin can override
  * just one and keep the provider-standard rate for the other.
+ *
+ * The resolved prices are pushed into every LiteLLM deployment's
+ * litellm_params (cache_creation_input_token_cost / cache_read_input_token_cost)
+ * at registration time, so LiteLLM's response_cost is the single source of
+ * truth for request spend — no spend is ever recomputed locally.
  */
 import { db } from "../db/index.js";
 
@@ -81,64 +86,24 @@ export function resolveCachePricing(baseInputPerMtok: number): ResolvedCachePric
   };
 }
 
-interface ModelPricingRow {
-  input_cost_per_mtok: number;
-  output_cost_per_mtok: number;
+export interface CacheCostPerToken {
+  cacheWriteCostPerToken: number;
+  cacheReadCostPerToken: number;
 }
 
 /**
- * Look up a model's configured pricing by the model identifier reported by
- * LiteLLM. Matches the catalog display name, the raw litellm_model value, and
- * provider-prefixed variants ("anthropic/x", "openai/x").
+ * Resolve effective cache pricing as per-token costs, ready to push into a
+ * LiteLLM deployment's litellm_params (cache_creation_input_token_cost /
+ * cache_read_input_token_cost). Pushing these at registration time makes
+ * LiteLLM's response_cost authoritative for cached requests too, so Qillin
+ * never recomputes spend locally.
  */
-export function findModelPricing(model: string): ModelPricingRow | null {
-  const stripped = model.replace(/^(anthropic|openai)\//, "");
-  const row = db
-    .prepare(
-      `SELECT input_cost_per_mtok, output_cost_per_mtok FROM models
-       WHERE name = ? OR litellm_model = ? OR name = ? OR litellm_model = ?
-       LIMIT 1`,
-    )
-    .get(model, model, stripped, stripped) as ModelPricingRow | undefined;
-  if (!row) return null;
-  if (!row.input_cost_per_mtok && !row.output_cost_per_mtok) return null;
-  return row;
+export function resolveCacheCostPerToken(baseInputPerMtok: number): CacheCostPerToken {
+  const resolved = resolveCachePricing(baseInputPerMtok);
+  return {
+    cacheWriteCostPerToken: resolved.writePerMtok / 1_000_000,
+    cacheReadCostPerToken: resolved.readPerMtok / 1_000_000,
+  };
 }
 
-export interface SpendInput {
-  tokensIn: number;
-  tokensOut: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  model: string;
-}
 
-export interface SpendBreakdown {
-  spend: number;
-  uncachedTokensIn: number;
-  pricing: ResolvedCachePricing;
-}
-
-/**
- * Compute request spend from its token breakdown using catalog base prices and
- * the effective cache pricing. Returns null when the model is unknown (caller
- * then falls back to the cost reported by LiteLLM).
- *
- * Note: LiteLLM includes cache tokens in prompt_tokens, so the uncached input
- * is derived by subtraction (floored at 0).
- */
-export function computeCachedRequestSpend(input: SpendInput): SpendBreakdown | null {
-  const pricing = findModelPricing(input.model);
-  if (!pricing) return null;
-
-  const uncachedTokensIn = Math.max(0, input.tokensIn - input.cacheReadTokens - input.cacheWriteTokens);
-  const cache = resolveCachePricing(pricing.input_cost_per_mtok);
-
-  const spend =
-    (uncachedTokensIn / 1_000_000) * pricing.input_cost_per_mtok +
-    (input.cacheWriteTokens / 1_000_000) * cache.writePerMtok +
-    (input.cacheReadTokens / 1_000_000) * cache.readPerMtok +
-    (input.tokensOut / 1_000_000) * pricing.output_cost_per_mtok;
-
-  return { spend, uncachedTokensIn, pricing: cache };
-}

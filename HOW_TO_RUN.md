@@ -14,6 +14,31 @@ app is reachable from a single origin (`http://localhost:5173`).
 
 ---
 
+## Quick setup (recommended)
+
+On a fresh Linux machine, one script does everything in this guide for you:
+
+```bash
+git clone <your-repo-url>
+cd proxprox
+./scripts/setup.sh      # or: make setup
+make dev                # start all three services
+```
+
+`setup.sh` installs system packages (build tools, curl, PostgreSQL), Node.js
+24, pnpm and uv, provisions the PostgreSQL database, writes a `.env` with
+freshly generated secrets (the admin password is printed at the end), and
+installs all Node + Python dependencies. It is idempotent — safe to re-run
+after a failure.
+
+Options: `--skip-system` (don't install system packages or Node — verify
+only), `--skip-db` (don't provision PostgreSQL, e.g. when using a remote
+`DATABASE_URL`), `--help`.
+
+Prefer to do it by hand? Follow the manual steps below.
+
+---
+
 ## Prerequisites
 
 | Tool | Minimum version | Install |
@@ -157,6 +182,31 @@ pnpm --filter @workspace/api-spec run codegen   # regenerate API client after ed
 
 ---
 
+## Updating to the latest versions
+
+```bash
+make update       # or: ./scripts/update.sh
+```
+
+This updates **everything** to its latest version:
+
+- Node.js packages via `pnpm update --latest` across the workspace (including
+  the shared catalog in `pnpm-workspace.yaml`)
+- The LiteLLM proxy's Python packages (`litellm[proxy]`, `prisma`, `uvicorn`)
+
+Afterwards it type-checks the workspace so breakage from upstream changes
+surfaces immediately. Notes:
+
+- `react`/`react-dom` stay pinned, as documented in `pnpm-workspace.yaml`.
+- `minimumReleaseAge` still applies: "latest" means the newest release that is
+  at least 1 day old (supply-chain protection).
+- The LiteLLM proxy re-runs `prisma generate` automatically on its next start;
+  restart the services (`make dev`) to use the new versions.
+- Everything the script touches is tracked by git — roll back with
+  `git restore package.json pnpm-workspace.yaml pnpm-lock.yaml '*/package.json'`.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -164,6 +214,7 @@ pnpm --filter @workspace/api-spec run codegen   # regenerate API client after ed
 | `better-sqlite3` build error | Missing C++ toolchain | `sudo apt-get install build-essential` |
 | "AI proxy is starting up" on chat | LiteLLM not fully started yet | Wait ~60 s after `make proxy`, then retry |
 | LiteLLM fails to start | `DATABASE_URL` unset or PostgreSQL unreachable | Check the connection string; ensure PostgreSQL is running (`pg_lsclusters`) |
+| LiteLLM crashes with `ImportError: cannot import name 'get_flat_dependant'` | The venv has fastapi ≥ 0.140.7, which removed a private symbol litellm 1.95.0 imports | Re-run `make setup-python` — the pin in `apps/litellm-proxy/requirements.txt` restores a compatible fastapi |
 | `JWT_SECRET ... required` on API start | Missing secret | Set `JWT_SECRET` in `.env` |
 | Admin account not created | `ADMIN_EMAIL`/`ADMIN_PASSWORD` missing | Set them in `.env` before starting the API server |
 | 403 "user not allowed to access model" | Wrong model identifier in allowlist | In the admin panel, use the model's display name, not the internal `litellm_model` value |

@@ -6,6 +6,7 @@ import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Ho
 import { Button } from "./ui/button"
 import { Link } from "wouter"
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet"
+import { clearToken } from "@/lib/api"
 
 function NavLinks({ location, isAdmin, onNavigate }: { location: string; isAdmin: boolean; onNavigate?: () => void }) {
   const cls = (path: string) =>
@@ -83,7 +84,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const handleLogout = () => {
     const finishLogout = () => {
-      localStorage.removeItem("qillin_token")
+      clearToken()
       // Clear the cached user (and every other cached response) so no stale,
       // previously-logged-in user data lingers in the sidebar/UI after sign out.
       queryClient.clear()
@@ -154,14 +155,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <Logo />
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" className="text-sidebar-foreground">
+            <Button variant="ghost" size="icon" aria-label="Open navigation menu" className="text-sidebar-foreground">
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-72 p-0 bg-sidebar border-r flex flex-col">
             <div className="flex items-center justify-between p-5 border-b border-sidebar-border">
               <Logo />
-              <Button variant="ghost" size="icon" className="text-sidebar-foreground" onClick={() => setMobileOpen(false)}>
+              <Button variant="ghost" size="icon" aria-label="Close navigation menu" className="text-sidebar-foreground" onClick={() => setMobileOpen(false)}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
@@ -181,7 +182,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       {/* ── Desktop layout ──────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 flex-col md:flex-row">
-        <aside className="hidden md:flex w-64 border-r bg-sidebar flex-shrink-0 flex-col">
+        {/* Fixed-size sidebar: always exactly viewport height and pinned in
+            place while the main content scrolls, so the user footer (sign-in
+            / account) is always visible at the bottom of the viewport instead
+            of sitting at the bottom of a long page. The nav scrolls
+            internally when it overflows. */}
+        <aside className="hidden md:flex w-64 h-screen sticky top-0 self-start border-r bg-sidebar flex-shrink-0 flex-col overflow-hidden">
           <div className="p-6 pb-4">
             <Logo />
             <div className="mt-1 text-xs font-mono text-muted-foreground tracking-wider">PROXY CONTROL</div>

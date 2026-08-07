@@ -124,6 +124,14 @@ try {
   // Column already exists on fresh databases (added in CREATE TABLE above).
 }
 
+// Migrate: add last_used to api_keys for existing databases (it was added to
+// CREATE TABLE without an ALTER; the auth middleware now writes it on use).
+try {
+  db.exec("ALTER TABLE api_keys ADD COLUMN last_used TEXT");
+} catch {
+  // Column already exists.
+}
+
 // Migrate: add prompt-caching token metrics to activity_log.
 // cache_read_tokens  — tokens served from the provider's prompt cache
 // cache_write_tokens — tokens written into the provider's prompt cache

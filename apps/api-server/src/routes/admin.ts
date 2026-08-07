@@ -11,11 +11,12 @@ import {
   isLiteLLMAvailable,
   fetchModelsFromProvider,
 } from "../lib/litellm.js";
-import { syncModelsToLiteLLM, litellmModelString, computeDeploymentWeight } from "../lib/sync.js";
+import { syncModelsToLiteLLM, resyncModelPricingToLiteLLM, litellmModelString, computeDeploymentWeight } from "../lib/sync.js";
 import { encryptSecret, decryptSecret } from "../lib/crypto.js";
 import {
   getCustomCachePricing,
   setCustomCachePricing,
+  resolveCacheCostPerToken,
   DEFAULT_CACHE_WRITE_MULTIPLIER,
   DEFAULT_CACHE_READ_MULTIPLIER,
 } from "../lib/pricing.js";
@@ -331,7 +332,7 @@ router.get("/cache-pricing", (_req, res) => {
  * Each price is configured independently; null restores the Anthropic-standard
  * default percentage of the model's base input price for that side.
  */
-router.put("/cache-pricing", (req: AuthRequest, res) => {
+router.put("/cache-pricing", async (req: AuthRequest, res) => {
   const { cacheWriteCostPerMtok, cacheReadCostPerMtok } = req.body ?? {};
 
   const validate = (v: unknown, name: string): string | null => {
@@ -352,6 +353,15 @@ router.put("/cache-pricing", (req: AuthRequest, res) => {
     cacheWriteCostPerMtok: cacheWriteCostPerMtok ?? null,
     cacheReadCostPerMtok: cacheReadCostPerMtok ?? null,
   });
+
+  // Push the new rates into every LiteLLM deployment immediately so spend
+  // computed upstream (response_cost) reflects them without a restart.
+  // Failures are non-fatal: the startup sync reconciles pricing drift.
+  try {
+    await resyncModelPricingToLiteLLM();
+  } catch (err) {
+    req.log?.warn({ err }, "LiteLLM pricing resync failed — will repair on next restart");
+  }
 
   const custom = getCustomCachePricing();
   res.json({
@@ -638,8 +648,19 @@ router.post("/providers", async (req: AuthRequest, res) => {
 
   // Auto-create selected models and register all deployments in LiteLLM
   if (Array.isArray(models) && models.length > 0) {
+    const seenNames = new Set<string>();
     for (const m of models) {
       if (!m.id) continue;
+      // Skip duplicate names — within this request or already in the DB.
+      // LiteLLM pools deployments by model_name, so a duplicate would merge
+      // two models into one routing pool.
+      if (seenNames.has(m.id)) continue;
+      seenNames.add(m.id);
+      const nameTaken = db.prepare("SELECT id FROM models WHERE name = ?").get(m.id);
+      if (nameTaken) {
+        req.log.warn({ model: m.id }, "Skipping auto-created model: name already exists");
+        continue;
+      }
       const modelId = uuidv4();
       db.prepare(`
         INSERT INTO models (id, name, litellm_model, provider_id, context_window, input_cost_per_mtok, output_cost_per_mtok, enabled)
@@ -813,14 +834,32 @@ router.put("/providers/:providerId", async (req: AuthRequest, res) => {
   res.json(formatProvider(provider, Number(modelCount)));
 });
 
-router.delete("/providers/:providerId", (_req, res) => {
-  const { providerId } = _req.params;
+router.delete("/providers/:providerId", (req: AuthRequest, res) => {
+  const { providerId } = req.params;
   const existing = db.prepare("SELECT id FROM providers WHERE id = ?").get(providerId);
   if (!existing) {
     res.status(404).json({ error: "Provider not found" });
     return;
   }
+
+  // Collect model names BEFORE the cascade delete removes them from the DB.
+  const modelNames = (
+    db.prepare("SELECT name FROM models WHERE provider_id = ?").all(providerId) as any[]
+  ).map((m) => m.name);
+
   db.prepare("DELETE FROM providers WHERE id = ?").run(providerId);
+
+  // The FK cascade removed the provider's models from the DB; also remove
+  // their LiteLLM deployments so deleted models stop being routable through
+  // the proxy (the DB delete alone leaves stale, still-servable deployments).
+  if (isLiteLLMAvailable()) {
+    for (const name of modelNames) {
+      litellmSyncModelUpdate(name, null).catch((err) =>
+        req.log.warn({ err, model: name }, "LiteLLM cleanup failed after provider delete"),
+      );
+    }
+  }
+
   res.json({ message: "Provider deleted" });
 });
 
@@ -898,6 +937,7 @@ async function registerModelDeployments(
           apiKey: k.key,
           inputCostPerToken: model.input_cost_per_mtok != null ? model.input_cost_per_mtok / 1_000_000 : undefined,
           outputCostPerToken: model.output_cost_per_mtok != null ? model.output_cost_per_mtok / 1_000_000 : undefined,
+          ...resolveCacheCostPerToken(model.input_cost_per_mtok ?? 0),
           weight,
         },
       }).catch((err: any) => req.log?.warn({ err, model: model.name }, "LiteLLM model add failed"));
@@ -970,6 +1010,15 @@ router.post("/models", async (req: AuthRequest, res) => {
     return;
   }
 
+  // Model names must be unique: LiteLLM pools deployments by model_name, so a
+  // duplicate would merge two Qillin models into one routing pool and make
+  // update/delete sync operations affect both.
+  const nameTaken = db.prepare("SELECT id FROM models WHERE name = ?").get(name);
+  if (nameTaken) {
+    res.status(409).json({ error: `A model named "${name}" already exists` });
+    return;
+  }
+
   const id = uuidv4();
   const isEnabled = enabled !== false ? 1 : 0;
 
@@ -1008,6 +1057,7 @@ router.post("/models", async (req: AuthRequest, res) => {
             apiKey: k.key_value ? decryptSecret(k.key_value) : undefined,
             inputCostPerToken: inputCostPerMtok != null ? inputCostPerMtok / 1_000_000 : undefined,
             outputCostPerToken: outputCostPerMtok != null ? outputCostPerMtok / 1_000_000 : undefined,
+            ...resolveCacheCostPerToken(inputCostPerMtok ?? 0),
             weight,
           },
         }).catch((err: any) => req.log.warn({ err }, "LiteLLM model add failed"));
@@ -1030,6 +1080,16 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
   if (!existing) {
     res.status(404).json({ error: "Model not found" });
     return;
+  }
+
+  // Renaming onto an existing model name would merge two routing pools in
+  // LiteLLM (deployments are pooled by model_name) — reject the collision.
+  if (name && name !== existing.name) {
+    const nameTaken = db.prepare("SELECT id FROM models WHERE name = ?").get(name);
+    if (nameTaken) {
+      res.status(409).json({ error: `A model named "${name}" already exists` });
+      return;
+    }
   }
 
   const isEnabled = enabled !== false ? 1 : 0;
@@ -1107,6 +1167,7 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
                   apiKey: k.key_value ? decryptSecret(k.key_value) : undefined,
                   inputCostPerToken: newInputCost != null ? newInputCost / 1_000_000 : undefined,
                   outputCostPerToken: newOutputCost != null ? newOutputCost / 1_000_000 : undefined,
+                  ...resolveCacheCostPerToken(newInputCost ?? 0),
                   weight,
                 },
               }).catch((err: any) => req.log.warn({ err }, "LiteLLM deployment add failed"));
@@ -1122,14 +1183,23 @@ router.put("/models/:modelId", async (req: AuthRequest, res) => {
   res.json(formatModel(model, model.provider_name));
 });
 
-router.delete("/models/:modelId", (req, res) => {
+router.delete("/models/:modelId", (req: AuthRequest, res) => {
   const { modelId } = req.params;
-  const existing = db.prepare("SELECT id FROM models WHERE id = ?").get(modelId);
+  const existing = db.prepare("SELECT id, name FROM models WHERE id = ?").get(modelId) as any;
   if (!existing) {
     res.status(404).json({ error: "Model not found" });
     return;
   }
   db.prepare("DELETE FROM models WHERE id = ?").run(modelId);
+
+  // Remove the model's LiteLLM deployments so it stops being routable through
+  // the proxy (the DB delete alone leaves stale, still-servable deployments).
+  if (isLiteLLMAvailable()) {
+    litellmSyncModelUpdate(existing.name, null).catch((err) =>
+      req.log.warn({ err, model: existing.name }, "LiteLLM cleanup failed after model delete"),
+    );
+  }
+
   res.json({ message: "Model deleted" });
 });
 

@@ -69,7 +69,18 @@ export function requireApiOrJwtAuth(req: AuthRequest, res: Response, next: NextF
   const jwtUser = getUserFromToken(token);
   if (jwtUser) {
     req.user = jwtUser;
-    // For JWT users the proxy falls back to the master key.
+    // For JWT users the proxy falls back to the master key, which bypasses
+    // LiteLLM's per-user budgets — so the balance floor must be enforced here.
+    if (jwtUser.qredits <= 0) {
+      res.status(402).json({
+        error: {
+          message: "Insufficient Qredits. Ask your administrator to top up your balance.",
+          type: "insufficient_quota",
+          code: "insufficient_credits",
+        },
+      });
+      return;
+    }
     // Reject early if the master key is not configured — an empty Authorization
     // header forwarded to LiteLLM could expose internal routes.
     if (!LITELLM_MASTER_KEY) {
@@ -97,7 +108,24 @@ export function requireApiOrJwtAuth(req: AuthRequest, res: Response, next: NextF
       .get(apiKey.user_id) as any;
 
     if (user) {
+      // Balance floor — mirrors the JWT path and covers the master-key
+      // fallback below, which bypasses LiteLLM's own budget enforcement.
+      if (user.qredits <= 0) {
+        res.status(402).json({
+          error: {
+            message: "Insufficient Qredits. Ask your administrator to top up your balance.",
+            type: "insufficient_quota",
+            code: "insufficient_credits",
+          },
+        });
+        return;
+      }
       req.user = user;
+      // Touch last_used (throttled to one write per minute per key so
+      // high-volume keys don't turn every request into a DB write).
+      db.prepare(
+        "UPDATE api_keys SET last_used = datetime('now') WHERE key_hash = ? AND (last_used IS NULL OR last_used < datetime('now', '-60 seconds'))",
+      ).run(hash);
       // Use the key's own LiteLLM key if available, otherwise fall back to master key
       req.headers["x-qillin-litellm-key"] = apiKey.litellm_key ?? LITELLM_MASTER_KEY;
       req.headers["x-user-id"] = user.id;

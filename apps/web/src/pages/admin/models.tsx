@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { BrainCircuit, Plus, Edit2, Trash2, Server, Sparkles } from "lucide-react"
@@ -36,6 +37,7 @@ function AdminModelsContent() {
 
   const [editModel, setEditModel] = React.useState<Model | null>(null)
   const [isEditOpen, setIsEditOpen] = React.useState(false)
+  const [modelToDelete, setModelToDelete] = React.useState<Model | null>(null)
 
   const configuredModels: ConfiguredModel[] = React.useMemo(
     () =>
@@ -51,9 +53,9 @@ function AdminModelsContent() {
     [models]
   )
 
-  const handleDelete = (id: string) => {
-    if (!confirm("Remove this model from the catalog?")) return
-    deleteModel.mutate({ modelId: id }, {
+  const handleDeleteConfirm = () => {
+    if (!modelToDelete) return
+    deleteModel.mutate({ modelId: modelToDelete.id }, {
       onSuccess: () => {
         toast({ title: "Model removed" })
         queryClient.invalidateQueries({ queryKey: getGetAdminModelsQueryKey() })
@@ -125,10 +127,10 @@ function AdminModelsContent() {
                         <div className="text-[9px] font-mono text-muted-foreground uppercase">Qr/MTok</div>
                       </td>
                       <td className="p-3 text-right space-x-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none hover:bg-sidebar/30" onClick={() => openEdit(model)}>
+                        <Button variant="ghost" size="icon" aria-label={`Edit model ${model.name}`} className="h-8 w-8 rounded-none hover:bg-sidebar/30" onClick={() => openEdit(model)}>
                           <Edit2 className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none text-destructive hover:bg-destructive/10" onClick={() => handleDelete(model.id)}>
+                        <Button variant="ghost" size="icon" aria-label={`Delete model ${model.name}`} className="h-8 w-8 rounded-none text-destructive hover:bg-destructive/10" onClick={() => setModelToDelete(model)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </td>
@@ -165,10 +167,10 @@ function AdminModelsContent() {
                     </Badge>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none hover:bg-sidebar/30" onClick={() => openEdit(model)}>
+                    <Button variant="ghost" size="icon" aria-label={`Edit model ${model.name}`} className="h-8 w-8 rounded-none hover:bg-sidebar/30" onClick={() => openEdit(model)}>
                       <Edit2 className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-none text-destructive hover:bg-destructive/10" onClick={() => handleDelete(model.id)}>
+                    <Button variant="ghost" size="icon" aria-label={`Delete model ${model.name}`} className="h-8 w-8 rounded-none text-destructive hover:bg-destructive/10" onClick={() => setModelToDelete(model)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
@@ -200,6 +202,27 @@ function AdminModelsContent() {
           </DialogContent>
         </Dialog>
       )}
+
+      <AlertDialog open={modelToDelete !== null} onOpenChange={(open) => { if (!open) setModelToDelete(null) }}>
+        <AlertDialogContent className="rounded-none border-2">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-mono uppercase tracking-wider">Remove model</AlertDialogTitle>
+            <AlertDialogDescription className="font-mono text-xs">
+              Remove {modelToDelete?.name} from the catalog? Requests routed to it will start failing. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-none font-mono uppercase text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-none font-mono uppercase text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeleteConfirm}
+              disabled={deleteModel.isPending}
+            >
+              {deleteModel.isPending ? "Removing..." : "Remove model"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -256,17 +279,41 @@ function ModelForm({
     }
   }
 
+  // Strict validation: reject malformed numbers instead of silently coercing
+  // them (a typo in a cost field must never become 0 = "free").
+  const formError = React.useMemo(() => {
+    if (!name.trim() || !litellmModel.trim() || !providerId) {
+      return "Name, model target, and provider are required."
+    }
+    const ctx = Number(contextWindow)
+    if (contextWindow.trim() === "" || !Number.isInteger(ctx) || ctx <= 0) {
+      return "Context window must be a positive whole number."
+    }
+    const inCost = Number(inputCost)
+    if (inputCost.trim() === "" || !Number.isFinite(inCost) || inCost < 0) {
+      return "Input cost must be a non-negative number."
+    }
+    const outCost = Number(outputCost)
+    if (outputCost.trim() === "" || !Number.isFinite(outCost) || outCost < 0) {
+      return "Output cost must be a non-negative number."
+    }
+    return null
+  }, [name, litellmModel, providerId, contextWindow, inputCost, outputCost])
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name || !litellmModel || !providerId) return
+    if (formError) {
+      toast({ title: "Invalid model configuration", description: formError, variant: "destructive" })
+      return
+    }
 
     const payload: ModelInput = {
-      name,
-      litellmModel,
+      name: name.trim(),
+      litellmModel: litellmModel.trim(),
       providerId,
-      contextWindow: parseInt(contextWindow, 10) || 4096,
-      inputCostPerMtok: parseFloat(inputCost) || 0,
-      outputCostPerMtok: parseFloat(outputCost) || 0,
+      contextWindow: Number(contextWindow),
+      inputCostPerMtok: Number(inputCost),
+      outputCostPerMtok: Number(outputCost),
       enabled
     }
 
@@ -401,11 +448,14 @@ function ModelForm({
       </div>
 
       <DialogFooter className="border-t pt-4 flex-col sm:flex-row gap-2">
+        {formError && (
+          <p className="w-full font-mono text-xs text-destructive sm:mr-auto" role="alert">{formError}</p>
+        )}
         <Button type="button" variant="outline" onClick={onClose} className="rounded-none font-mono uppercase w-full sm:w-auto">Cancel</Button>
         <Button
           type="submit"
           className="rounded-none font-mono uppercase w-full sm:w-auto"
-          disabled={createModel.isPending || updateModel.isPending}
+          disabled={createModel.isPending || updateModel.isPending || formError !== null}
         >
           Commit Configuration
         </Button>

@@ -64,10 +64,12 @@ function AdminCachePricingContent() {
     updatePricing.mutate(
       { data: { cacheWriteCostPerMtok: write, cacheReadCostPerMtok: read } },
       {
+        // NOTE: do NOT reset `initialized` here — the prefill effect would run
+        // against the still-stale query cache and overwrite the inputs with
+        // the pre-save values. The inputs already hold what was submitted.
         onSuccess: () => {
           toast({ title: "Cache pricing updated" })
           queryClient.invalidateQueries({ queryKey: getGetAdminCachePricingQueryKey() })
-          setInitialized(false)
         },
         onError: () => toast({ title: "Error updating cache pricing", variant: "destructive" }),
       },
@@ -83,7 +85,6 @@ function AdminCachePricingContent() {
           queryClient.invalidateQueries({ queryKey: getGetAdminCachePricingQueryKey() })
           setWriteInput("")
           setReadInput("")
-          setInitialized(false)
         },
         onError: () => toast({ title: "Error resetting cache pricing", variant: "destructive" }),
       },

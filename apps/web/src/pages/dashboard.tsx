@@ -6,11 +6,13 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Label } from "@/components/ui/label"
-import { formatCurrency, formatNumber, formatTokens } from "@/lib/utils"
-import { Copy, Plus, Trash2, Key, Activity, DollarSign, TerminalSquare, AlertCircle } from "lucide-react"
+import { formatCurrency, formatNumber, formatTokens, copyTextToClipboard } from "@/lib/utils"
+import { getOpenAiBaseUrl } from "@/lib/url"
+import { Copy, Plus, Trash2, Key, Activity, DollarSign, TerminalSquare, AlertCircle, Loader2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
@@ -26,9 +28,9 @@ export default function Dashboard() {
 }
 
 function DashboardContent() {
-  const { data: me } = useGetMe()
-  const { data: usage } = useGetUserUsage()
-  const { data: keys } = useGetUserKeys()
+  const { data: me, isLoading: meLoading } = useGetMe()
+  const { data: usage, isLoading: usageLoading, isError: usageError } = useGetUserUsage()
+  const { data: keys, isLoading: keysLoading, isError: keysError } = useGetUserKeys()
   const createKey = useCreateUserKey()
   const deleteKey = useDeleteUserKey()
   const { toast } = useToast()
@@ -37,6 +39,20 @@ function DashboardContent() {
   const [newKeyName, setNewKeyName] = useState("")
   const [createdToken, setCreatedToken] = useState<string | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [keyToRevoke, setKeyToRevoke] = useState<string | null>(null)
+
+  const openAiBaseUrl = getOpenAiBaseUrl()
+  const pythonSnippet = `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${openAiBaseUrl}",
+    api_key="sk-qillin-..."
+)
+
+response = client.chat.completions.create(
+    model="openai/gpt-4o",
+    messages=[{"role": "user", "content": "Hello!"}]
+)`
 
   const handleCreateKey = () => {
     if (!newKeyName.trim()) return
@@ -55,10 +71,10 @@ function DashboardContent() {
     )
   }
 
-  const handleDeleteKey = (hash: string) => {
-    if (!confirm("Are you sure you want to revoke this key?")) return
+  const handleRevokeConfirm = () => {
+    if (!keyToRevoke) return
     deleteKey.mutate(
-      { keyHash: hash },
+      { keyHash: keyToRevoke },
       {
         onSuccess: () => {
           toast({ title: "Key revoked successfully" })
@@ -71,9 +87,13 @@ function DashboardContent() {
     )
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    toast({ title: "Copied to clipboard" })
+  const copyToClipboard = async (text: string) => {
+    const ok = await copyTextToClipboard(text)
+    if (ok) {
+      toast({ title: "Copied to clipboard" })
+    } else {
+      toast({ title: "Copy failed", description: "Select the text and copy it manually", variant: "destructive" })
+    }
   }
 
   return (
@@ -90,7 +110,11 @@ function DashboardContent() {
             <DollarSign className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono text-emerald-500">{formatCurrency(me?.qredits)} Qr</div>
+            {meLoading ? (
+              <Skeleton className="h-9 w-28" />
+            ) : (
+              <div className="text-3xl font-bold font-mono text-emerald-500">{formatCurrency(me?.qredits)} Qr</div>
+            )}
             <p className="text-xs text-muted-foreground font-mono mt-1 flex items-center gap-1">
               <span className="w-2 h-2 bg-emerald-500 rounded-full inline-block"></span> ACTIVE BALANCE
             </p>
@@ -102,7 +126,13 @@ function DashboardContent() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono">{formatCurrency(usage?.totalSpend)} Qr</div>
+            {usageLoading ? (
+              <Skeleton className="h-9 w-28" />
+            ) : usageError ? (
+              <div className="text-sm font-mono text-destructive">Unavailable</div>
+            ) : (
+              <div className="text-3xl font-bold font-mono">{formatCurrency(usage?.totalSpend)} Qr</div>
+            )}
             <p className="text-xs text-muted-foreground font-mono mt-1">THIS BILLING CYCLE</p>
           </CardContent>
         </Card>
@@ -112,7 +142,13 @@ function DashboardContent() {
             <TerminalSquare className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono">{formatNumber(usage?.totalRequests)}</div>
+            {usageLoading ? (
+              <Skeleton className="h-9 w-20" />
+            ) : usageError ? (
+              <div className="text-sm font-mono text-destructive">Unavailable</div>
+            ) : (
+              <div className="text-3xl font-bold font-mono">{formatNumber(usage?.totalRequests)}</div>
+            )}
             <p className="text-xs text-muted-foreground font-mono mt-1">ALL MODELS</p>
           </CardContent>
         </Card>
@@ -128,20 +164,29 @@ function DashboardContent() {
             <CardDescription className="font-mono text-xs">Credentials for programmatic access</CardDescription>
           </CardHeader>
           <CardContent>
-            {keys && keys.length > 0 ? (
+            {keysLoading ? (
+              <div className="space-y-4">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : keysError ? (
+              <div className="text-center py-8 border border-dashed bg-sidebar/10">
+                <p className="font-mono text-sm text-destructive">Failed to load access keys</p>
+              </div>
+            ) : keys && keys.length > 0 ? (
               <div className="space-y-4">
                 {keys.map(key => (
-                  <div key={key.keyHash} className="flex items-center justify-between p-3 border bg-sidebar/30">
-                    <div>
-                      <div className="font-mono text-sm font-bold">{key.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground mt-1">{key.keyHash.substring(0, 16)}...</div>
+                  <div key={key.keyHash} className="flex items-center justify-between gap-3 p-3 border bg-sidebar/30">
+                    <div className="min-w-0">
+                      <div className="font-mono text-sm font-bold truncate" title={key.name}>{key.name}</div>
+                      <div className="font-mono text-xs text-muted-foreground mt-1 truncate">{key.keyHash.substring(0, 16)}...</div>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 shrink-0">
                       <div className="text-right">
                         <div className="font-mono text-xs text-muted-foreground">SPEND</div>
                         <div className="font-mono text-sm font-bold">{formatCurrency(key.spend)} Qr</div>
                       </div>
-                      <Button variant="ghost" size="icon" onClick={() => handleDeleteKey(key.keyHash)} className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-none">
+                      <Button variant="ghost" size="icon" aria-label={`Revoke key ${key.name}`} onClick={() => setKeyToRevoke(key.keyHash)} className="text-destructive hover:text-destructive hover:bg-destructive/10 rounded-none">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -177,7 +222,7 @@ function DashboardContent() {
                     </div>
                     <div className="flex gap-2">
                       <Input value={createdToken} readOnly className="font-mono text-xs rounded-none bg-sidebar/30" />
-                      <Button variant="outline" size="icon" className="shrink-0 rounded-none" onClick={() => copyToClipboard(createdToken)}>
+                      <Button variant="outline" size="icon" aria-label="Copy API key" className="shrink-0 rounded-none" onClick={() => copyToClipboard(createdToken)}>
                         <Copy className="h-4 w-4" />
                       </Button>
                     </div>
@@ -185,10 +230,11 @@ function DashboardContent() {
                 ) : (
                   <div className="space-y-4 py-4">
                     <div className="space-y-2">
-                      <Label className="font-mono text-xs uppercase tracking-wider">Key Label</Label>
-                      <Input 
-                        placeholder="e.g. Production App, CI/CD Pipeline" 
-                        value={newKeyName} 
+                      <Label htmlFor="key-label" className="font-mono text-xs uppercase tracking-wider">Key Label</Label>
+                      <Input
+                        id="key-label"
+                        placeholder="e.g. Production App, CI/CD Pipeline"
+                        value={newKeyName}
                         onChange={(e) => setNewKeyName(e.target.value)}
                         className="rounded-none font-mono text-sm"
                       />
@@ -216,20 +262,20 @@ function DashboardContent() {
               <TerminalSquare className="w-5 h-5 text-primary" />
               Quick Integration
             </CardTitle>
-            <CardDescription className="font-mono text-xs">Base URL: <span className="font-bold text-foreground">https://qillin.local/v1</span></CardDescription>
+            <CardDescription className="font-mono text-xs">Base URL: <span className="font-bold text-foreground break-all">{openAiBaseUrl}</span></CardDescription>
           </CardHeader>
           <CardContent>
             <div className="bg-sidebar border p-4 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-xs font-bold text-muted-foreground uppercase">Python (OpenAI SDK)</span>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(`from openai import OpenAI\n\nclient = OpenAI(\n    base_url="https://qillin.local/v1",\n    api_key="sk-qillin-..."\n)\n\nresponse = client.chat.completions.create(\n    model="openai/gpt-4o",\n    messages=[{"role": "user", "content": "Hello!"}]\n)`)}>
+                <Button variant="ghost" size="icon" aria-label="Copy Python example" className="h-6 w-6" onClick={() => copyToClipboard(pythonSnippet)}>
                   <Copy className="h-3 w-3" />
                 </Button>
               </div>
               <pre className="text-xs font-mono overflow-x-auto text-foreground">
 <span className="text-primary">from</span> openai <span className="text-primary">import</span> OpenAI{'\n\n'}
 client = OpenAI({'\n'}
-    base_url=<span className="text-emerald-500">"https://qillin.local/v1"</span>,{'\n'}
+    base_url=<span className="text-emerald-500">"{openAiBaseUrl}"</span>,{'\n'}
     api_key=<span className="text-emerald-500">"sk-qillin-..."</span>{'\n'}
 ){'\n\n'}
 response = client.chat.completions.create({'\n'}
@@ -259,7 +305,19 @@ response = client.chat.completions.create({'\n'}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {usage?.modelBreakdown && usage.modelBreakdown.length > 0 ? (
+              {usageLoading ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center py-8">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary mx-auto" />
+                  </TableCell>
+                </TableRow>
+              ) : usageError ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center font-mono text-sm text-destructive py-8">
+                    Failed to load usage data
+                  </TableCell>
+                </TableRow>
+              ) : usage?.modelBreakdown && usage.modelBreakdown.length > 0 ? (
                 usage.modelBreakdown.map(model => (
                   <TableRow key={model.modelId}>
                     <TableCell className="font-mono font-medium text-primary">{model.modelName}</TableCell>
@@ -280,6 +338,27 @@ response = client.chat.completions.create({'\n'}
           </Table>
         </CardContent>
       </Card>
+
+      <AlertDialog open={keyToRevoke !== null} onOpenChange={(open) => { if (!open) setKeyToRevoke(null) }}>
+        <AlertDialogContent className="rounded-none border-2">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-mono uppercase tracking-wider">Revoke access key</AlertDialogTitle>
+            <AlertDialogDescription className="font-mono text-xs">
+              This key will stop working immediately. Applications using it will lose access. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-none font-mono uppercase text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-none font-mono uppercase text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleRevokeConfirm}
+              disabled={deleteKey.isPending}
+            >
+              {deleteKey.isPending ? "Revoking..." : "Revoke key"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

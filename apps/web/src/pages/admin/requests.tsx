@@ -2,7 +2,7 @@ import * as React from "react"
 import { useState } from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
-import { useGetAdminRequests } from "@workspace/api-client-react"
+import { useGetAdminRequests, getGetAdminRequestsQueryKey } from "@workspace/api-client-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { formatCurrency, formatNumber } from "@/lib/utils"
 import { ChevronLeft, ChevronRight, Loader2, FilterX, Search, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { keepPreviousData } from "@tanstack/react-query"
 
 export default function AdminRequests() {
   return (
@@ -32,7 +33,11 @@ function AdminRequestsContent() {
     ...(appliedModel ? { model: appliedModel } : {})
   }
   
-  const { data: requestsPage, isLoading } = useGetAdminRequests(queryParams)
+  // Keep the previous page's rows visible while the next page loads.
+  const { data: requestsPage, isLoading, isPlaceholderData } = useGetAdminRequests(
+    queryParams,
+    { query: { placeholderData: keepPreviousData, queryKey: getGetAdminRequestsQueryKey(queryParams) } }
+  )
 
   const applyFilter = (e: React.FormEvent) => {
     e.preventDefault()
@@ -86,7 +91,7 @@ function AdminRequestsContent() {
         </CardHeader>
         
         <CardContent className="p-0 bg-background">
-          <div className="overflow-x-auto">
+          <div className={`overflow-x-auto transition-opacity ${isPlaceholderData ? "opacity-60" : ""}`}>
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent bg-sidebar/30">

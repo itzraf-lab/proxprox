@@ -13,7 +13,6 @@
 import { Router } from "express";
 import { db, uuidv4 } from "../db/index.js";
 import { logger } from "../lib/logger.js";
-import { computeCachedRequestSpend } from "../lib/pricing.js";
 
 const router = Router();
 const LITELLM_MASTER_KEY = process.env.LITELLM_MASTER_KEY ?? "";
@@ -57,25 +56,14 @@ router.post("/litellm-event", (req, res) => {
   const latencyN = Number(latencyMs) || null;
   const cacheReadN = Math.max(0, Number(cacheReadTokens) || 0);
   const cacheWriteN = Math.max(0, Number(cacheWriteTokens) || 0);
-  const isCachedRequest = cacheReadN > 0 || cacheWriteN > 0;
 
-  // Spend: for cached requests, recompute from the token breakdown so custom
-  // admin-configured cache pricing (or Anthropic-standard default percentages)
-  // is applied. For uncached requests — or when the model isn't in the
-  // catalog — trust the cost LiteLLM computed upstream.
-  let spendAmount = Number(spend) || 0;
-  if (isCachedRequest) {
-    const breakdown = computeCachedRequestSpend({
-      tokensIn: tokensInN,
-      tokensOut: tokensOutN,
-      cacheReadTokens: cacheReadN,
-      cacheWriteTokens: cacheWriteN,
-      model: String(model),
-    });
-    if (breakdown) {
-      spendAmount = breakdown.spend;
-    }
-  }
+  // Spend is trusted verbatim from LiteLLM's response_cost. LiteLLM is the
+  // single source of truth for billing: base input/output prices AND cache
+  // pricing (cache_creation_input_token_cost / cache_read_input_token_cost)
+  // are pushed into every deployment's litellm_params at registration time
+  // (see lib/sync.ts expectedCostParams), so its computed cost already
+  // reflects the admin-configured rates — including for cached requests.
+  const spendAmount = Math.max(0, Number(spend) || 0);
 
   // Look up user email for the log record
   const user = db

@@ -125,6 +125,14 @@ export async function litellmAddModel(params: {
     inputCostPerToken?: number;
     outputCostPerToken?: number;
     /**
+     * Effective cache pricing for this deployment. Pushed into litellm_params
+     * so LiteLLM's response_cost accounts for cached tokens using Qillin's
+     * admin-configured rates — making LiteLLM the single source of truth for
+     * spend on every request, cached or not.
+     */
+    cacheWriteCostPerToken?: number;
+    cacheReadCostPerToken?: number;
+    /**
      * Routing weight used by LiteLLM's simple-shuffle strategy.
      * weight=1  → deployment is part of the active routing pool.
      * weight=0  → deployment is a standby; only used when ALL weight>0
@@ -147,6 +155,12 @@ export async function litellmAddModel(params: {
           : {}),
         ...(params.litellmParams.outputCostPerToken != null
           ? { output_cost_per_token: params.litellmParams.outputCostPerToken }
+          : {}),
+        ...(params.litellmParams.cacheWriteCostPerToken != null
+          ? { cache_creation_input_token_cost: params.litellmParams.cacheWriteCostPerToken }
+          : {}),
+        ...(params.litellmParams.cacheReadCostPerToken != null
+          ? { cache_read_input_token_cost: params.litellmParams.cacheReadCostPerToken }
           : {}),
         ...(params.litellmParams.weight != null
           ? { weight: params.litellmParams.weight }
@@ -171,14 +185,19 @@ export async function litellmListModels() {
  * Sync a model update to LiteLLM.
  *
  * LiteLLM's /model/update endpoint requires its internal UUID, which Qillin
- * doesn't persist. Instead we: find the old entry by model_name, delete it,
- * then re-add with the new params. This handles cost changes, renames,
+ * doesn't persist. Instead we: find the old entries by model_name, delete
+ * them, then re-add with the new params. This handles cost changes, renames,
  * provider swaps, and enable/disable all in one path.
  *
+ * A model_name can have MULTIPLE pooled deployments (one per base_url/key
+ * pair) — every match must be deleted, otherwise deleting or disabling a
+ * model leaves stale deployments that stay routable through the proxy.
+ *
  * Resilience: if the re-add step fails after a successful delete, the function
- * attempts to re-add the old entry (compensation) so the model is not silently
- * removed from LiteLLM. On compensation failure the error is re-thrown — the
- * model will be re-registered on the next server restart via syncModelsToLiteLLM.
+ * attempts to re-add the old entries (compensation) so the model is not
+ * silently removed from LiteLLM. On compensation failure the error is
+ * re-thrown — the model will be re-registered on the next server restart via
+ * syncModelsToLiteLLM.
  *
  * @param oldModelName  The model_name currently registered in LiteLLM (before rename)
  * @param newConfig     New params; pass null to only delete (i.e. disable)
@@ -193,14 +212,16 @@ export async function litellmSyncModelUpdate(
       apiKey?: string;
       inputCostPerToken?: number;
       outputCostPerToken?: number;
+      cacheWriteCostPerToken?: number;
+      cacheReadCostPerToken?: number;
     };
   } | null,
 ): Promise<void> {
-  // Find the existing LiteLLM entry by its model_name
+  // Find every LiteLLM entry pooled under this model_name
   const info = await litellmListModels() as any;
-  const entry = (info.data ?? []).find((m: any) => m.model_name === oldModelName);
+  const entries = (info.data ?? []).filter((m: any) => m.model_name === oldModelName);
 
-  if (entry) {
+  for (const entry of entries) {
     await litellmDeleteModel(entry.model_info.id);
   }
 
@@ -208,10 +229,11 @@ export async function litellmSyncModelUpdate(
     try {
       await litellmAddModel(newConfig);
     } catch (addErr) {
-      // Add failed after delete — attempt to restore the old entry so the model
-      // is not silently absent from LiteLLM. On compensation failure, rethrow
-      // so the caller can log a clear warning; the startup sync will repair it.
-      if (entry) {
+      // Add failed after delete — attempt to restore the old entries so the
+      // model is not silently absent from LiteLLM. On compensation failure,
+      // rethrow so the caller can log a clear warning; the startup sync will
+      // repair it.
+      for (const entry of entries) {
         try {
           await litellmAddModel({
             modelName: entry.model_name,

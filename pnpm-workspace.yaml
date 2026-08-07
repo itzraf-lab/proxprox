@@ -1,54 +1,34 @@
-# ============================================================================
-# SECURITY: Minimum release age for npm packages (supply-chain attack defense)
-# ============================================================================
-#
-# This setting requires that any npm package version must have been published
-# for at least 1 day (1440 minutes) before pnpm will allow installing it.
-# This is a critical defense against supply-chain attacks. In most cases,
-# malicious npm releases are discovered and pulled within hours, so a 1-day
-# delay provides a strong safety buffer.
-#
-# DO NOT DISABLE THIS SETTING. Removing or setting it to 0 is considered
-# extremely dangerous and leaves the entire workspace vulnerable to supply-
-# chain attacks, which have been the #1 vector for npm ecosystem compromises.
-#
-# If you absolutely need to install a package before the 1-day window has
-# passed (e.g. an urgent security bugfix), add it to the
-# `minimumReleaseAgeExclude` allowlist below. Only do this for packages from
-# trusted organizations with an impeccable security posture, and remove the
-# exclusion once the 1-day window has passed.
-# ============================================================================
-minimumReleaseAge: 1440
-
 packages:
   - apps/api-server
   - apps/web
   - packages/*
 
+autoInstallPeers: false
+
 catalog:
-  '@tailwindcss/vite': ^4.1.14
-  '@tanstack/react-query': ^5.90.21
-  '@types/node': ^25.3.3
-  '@types/react': ^19.2.0
-  '@types/react-dom': ^19.2.0
-  '@vitejs/plugin-react': ^5.0.4
+  '@tailwindcss/vite': ^4.3.3
+  '@tanstack/react-query': ^5.101.4
+  '@types/node': ^26.1.2
+  '@types/react': ^19.2.18
+  '@types/react-dom': ^19.2.4
+  '@vitejs/plugin-react': ^6.0.5
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
   drizzle-orm: ^0.45.2
-  framer-motion: ^12.23.24
-  lucide-react: ^0.545.0
-  # Must be this exact version because expo requires it
+  framer-motion: ^12.43.0
+  lucide-react: ^1.28.0
+  # react / react-dom are pinned on purpose (not upgraded by scripts/update.sh):
+  # the shadcn/Radix component stack is validated against this exact version.
   react: 19.1.0
-  # Must be this exact version because expo requires it
   react-dom: 19.1.0
-  tailwind-merge: ^3.3.1
-  tailwindcss: ^4.1.14
+  tailwind-merge: ^3.6.0
+  tailwindcss: ^4.3.3
   tsx: ^4.21.0
-  vite: ^7.3.2
-  wouter: ^3.3.5
-  zod: ^3.25.76
+  vite: ^8.2.0
+  wouter: ^3.10.0
+  zod: ^4.4.3
 
-autoInstallPeers: false
+minimumReleaseAge: 1440
 
 onlyBuiltDependencies:
   - '@swc/core'
@@ -58,6 +38,5 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
-  # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
-  "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
-  esbuild: "0.27.3"
+  '@esbuild-kit/esm-loader': npm:tsx@^4.21.0
+  esbuild: 0.28.1

@@ -3,6 +3,7 @@ import { Shell } from "@/components/layout"
 import { useGetModels } from "@workspace/api-client-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { formatCurrency } from "@/lib/utils"
 import { fmtCtx } from "@/lib/known-models"
 import { Search, Server, Zap, BrainCircuit } from "lucide-react"
@@ -10,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
 
 export default function Models() {
-  const { data: models, isLoading } = useGetModels()
+  const { data: models, isLoading, isError, refetch } = useGetModels()
   const [search, setSearch] = useState("")
 
   const filteredModels = models?.filter(m => 
@@ -47,8 +48,17 @@ export default function Models() {
           <div className="max-w-6xl mx-auto">
             {isLoading ? (
               <div className="text-center font-mono text-muted-foreground py-12">Loading catalog...</div>
+            ) : isError ? (
+              <div className="text-center py-12 border-2 border-dashed">
+                <p className="font-mono text-destructive">Failed to load the model catalog.</p>
+                <Button variant="outline" className="mt-4 rounded-none font-mono text-xs uppercase" onClick={() => refetch()}>
+                  Retry
+                </Button>
+              </div>
             ) : filteredModels.length === 0 ? (
-              <div className="text-center font-mono text-muted-foreground py-12 border-2 border-dashed">No models match your search.</div>
+              <div className="text-center font-mono text-muted-foreground py-12 border-2 border-dashed">
+                {search ? "No models match your search." : "No models available yet."}
+              </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {filteredModels.map(model => (

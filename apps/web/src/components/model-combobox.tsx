@@ -75,9 +75,12 @@ export function ModelCombobox({ value, onChange, configuredModels = [], placehol
   }
 
   const handleCustomInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value
-    const known = KNOWN_MODELS.find(m => m.litellmModel === v) ?? null
-    onChange(v, known)
+    // Typed input must NOT trigger catalog auto-fill: while editing an existing
+    // model, an intermediate keystroke that exactly matches a catalog ID (e.g.
+    // "gpt-4o" on the way to "gpt-4o-azure") would silently overwrite the
+    // model's saved pricing/context with catalog values. Only explicit
+    // popover selections auto-fill metadata.
+    onChange(e.target.value, null)
   }
 
   const isEmpty = filteredConfigured.length === 0 && groupedKnown.size === 0
@@ -126,7 +129,7 @@ export function ModelCombobox({ value, onChange, configuredModels = [], placehol
                 {/* Configured / provider models */}
                 {filteredConfigured.length > 0 && (
                   <div>
-                    <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground bg-primary/5 border-b sticky top-0">
+                    <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest text-primary bg-background border-b sticky top-0 z-10">
                       ✦ Configured in this system
                     </div>
                     {filteredConfigured.map(m => (
@@ -155,7 +158,7 @@ export function ModelCombobox({ value, onChange, configuredModels = [], placehol
                 {/* Known model catalog by category */}
                 {Array.from(groupedKnown.entries()).map(([cat, models]) => (
                   <div key={cat}>
-                    <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground bg-sidebar/30 border-b sticky top-0">
+                    <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground bg-background border-b sticky top-0 z-10">
                       {cat}
                     </div>
                     {models.map(m => (

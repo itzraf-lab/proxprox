@@ -16,7 +16,19 @@ import AdminCachePricing from '@/pages/admin/cache-pricing';
 import Requests from '@/pages/requests';
 import AdminRequests from '@/pages/admin/requests';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Keep data fresh for 30s so navigating between pages doesn't trigger
+      // a refetch storm on every mount; pages can still opt out per-query.
+      staleTime: 30_000,
+      // Fail fast: one retry instead of the default three so error states
+      // surface quickly instead of leaving spinners up for seconds.
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 function NotFound() {
   return (

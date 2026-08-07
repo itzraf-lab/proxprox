@@ -15,9 +15,10 @@ router.get("/usage", async (req: AuthRequest, res) => {
   const userId = req.user!.id;
 
   try {
-    // Get usage from activity log
+    // Get usage from activity log (request rows only — 'credit_update' entries
+    // must not inflate the request count)
     const totalRow = db
-      .prepare("SELECT COALESCE(SUM(spend), 0) as total_spend, COUNT(*) as total_requests FROM activity_log WHERE user_id = ?")
+      .prepare("SELECT COALESCE(SUM(spend), 0) as total_spend, COUNT(*) as total_requests FROM activity_log WHERE user_id = ? AND type = 'request'")
       .get(userId) as any;
 
     const modelBreakdown = db
@@ -110,6 +111,11 @@ router.post("/keys", async (req: AuthRequest, res) => {
     return;
   }
 
+  if (maxBudget != null && (typeof maxBudget !== "number" || !Number.isFinite(maxBudget) || maxBudget < 0)) {
+    res.status(400).json({ error: "maxBudget must be a non-negative number" });
+    return;
+  }
+
   let litellmKey: string | null = null;
   let keyHash: string;
 
@@ -120,8 +126,15 @@ router.post("/keys", async (req: AuthRequest, res) => {
         name,
         maxBudget: maxBudget ?? null,
       }) as any;
-      litellmKey = result.key;
-      keyHash = result.token ?? crypto.randomBytes(32).toString("hex");
+      if (!result?.key) {
+        throw new Error("LiteLLM /key/generate response did not include a key");
+      }
+      const plainKey: string = result.key;
+      litellmKey = plainKey;
+      // LiteLLM's `token` is sha256(key) — the same digest requireApiOrJwtAuth
+      // computes from the Bearer token. If it's ever absent, derive it the
+      // same way; a random fallback would make the key permanently unusable.
+      keyHash = result.token ?? crypto.createHash("sha256").update(plainKey).digest("hex");
     } catch (err) {
       req.log.warn({ err }, "LiteLLM key generation failed, creating local key");
       litellmKey = `sk-qillin-${crypto.randomBytes(24).toString("hex")}`;

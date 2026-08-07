@@ -17,7 +17,13 @@ import {
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { ProviderInputType, ProviderInputLoadBalancing, type Provider } from "@workspace/api-client-react"
-import { getToken } from "@/lib/api"
+import { customFetch } from "@/lib/api"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+
+// Raw fetch() calls must honor the same API base URL as the generated client
+// (setBaseUrl in main.tsx) — otherwise they break when the API is hosted on a
+// different origin via VITE_API_URL.
+const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "")
 
 interface FetchedModelInfo {
   id: string
@@ -83,10 +89,11 @@ function AdminProvidersContent() {
   const deleteProvider = useDeleteAdminProvider()
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const [providerToDelete, setProviderToDelete] = React.useState<Provider | null>(null)
 
-  const handleDelete = (id: string) => {
-    if (!confirm("Remove this provider? Associated models will go offline.")) return
-    deleteProvider.mutate({ providerId: id }, {
+  const handleDeleteConfirm = () => {
+    if (!providerToDelete) return
+    deleteProvider.mutate({ providerId: providerToDelete.id }, {
       onSuccess: () => {
         toast({ title: "Provider eliminated" })
         queryClient.invalidateQueries({ queryKey: getGetAdminProvidersQueryKey() })
@@ -141,7 +148,8 @@ function AdminProvidersContent() {
                   <EditProviderDialog provider={provider} />
                   <Button
                     variant="ghost" size="icon"
-                    onClick={() => handleDelete(provider.id)}
+                    aria-label={`Delete provider ${provider.name}`}
+                    onClick={() => setProviderToDelete(provider)}
                     className="text-destructive hover:bg-destructive/10 hover:text-destructive rounded-none shrink-0 ml-2"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -205,6 +213,27 @@ function AdminProvidersContent() {
           ))}
         </div>
       )}
+
+      <AlertDialog open={providerToDelete !== null} onOpenChange={(open) => { if (!open) setProviderToDelete(null) }}>
+        <AlertDialogContent className="rounded-none border-2">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-mono uppercase tracking-wider">Remove provider</AlertDialogTitle>
+            <AlertDialogDescription className="font-mono text-xs">
+              Remove {providerToDelete?.name}? Associated models will go offline. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-none font-mono uppercase text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-none font-mono uppercase text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeleteConfirm}
+              disabled={deleteProvider.isPending}
+            >
+              {deleteProvider.isPending ? "Removing..." : "Remove provider"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -215,6 +244,10 @@ function AddProviderDialog() {
   const [open, setOpen] = React.useState(false)
   const [isTesting, setIsTesting] = React.useState<number | null>(null)
   const [isSaving, setIsSaving] = React.useState(false)
+  // Monotonic sequence for connection tests: lets late responses detect that
+  // the dialog was closed/reset (or a newer test started) and bail out instead
+  // of writing stale state into a fresh form.
+  const testSeq = React.useRef(0)
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -234,6 +267,8 @@ function AddProviderDialog() {
   const [showManual, setShowManual] = React.useState(false)
 
   const reset = () => {
+    testSeq.current++ // invalidate any in-flight connection test
+    setIsTesting(null)
     setName(""); setType('openai'); setLb('round_robin')
     setBaseUrls([defaultBaseUrlEntry(1)])
     setFetchedModels(null); setSelectedIds(new Set()); setTestError(null)
@@ -295,15 +330,18 @@ function AddProviderDialog() {
     const bu = baseUrls[buIdx]
     if (!bu.keys[0]?.key) { toast({ title: "API key required", variant: "destructive" }); return }
     if (type === 'custom' && !bu.url) { toast({ title: "Base URL required for this endpoint", variant: "destructive" }); return }
+    const seq = ++testSeq.current
     setIsTesting(buIdx); setFetchedModels(null); setSelectedIds(new Set()); setTestError(null)
     try {
-      const token = getToken()
-      const res = await fetch('/api/admin/providers/test-connection', {
+      // customFetch attaches the auth token and redirects to /login on 401,
+      // matching every other API call in the app.
+      const res = await customFetch(`${API_BASE}/api/admin/providers/test-connection`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, baseUrl: type === 'custom' ? bu.url : undefined, apiKey: bu.keys[0].key }),
       })
       const data = await res.json()
+      if (seq !== testSeq.current) return // dialog closed/reset or a newer test started
       if (!res.ok) {
         setTestError(data?.error ?? 'Connection failed')
         toast({ title: "Connection failed", variant: "destructive" })
@@ -313,10 +351,11 @@ function AddProviderDialog() {
         toast({ title: `Found ${data.length} model${data.length !== 1 ? 's' : ''}` })
       }
     } catch (err: any) {
+      if (seq !== testSeq.current) return
       setTestError(err.message ?? 'Network error')
       toast({ title: "Failed to connect", variant: "destructive" })
     } finally {
-      setIsTesting(null)
+      if (seq === testSeq.current) setIsTesting(null)
     }
   }
 
@@ -382,10 +421,9 @@ function AddProviderDialog() {
 
     setIsSaving(true)
     try {
-      const token = getToken()
-      const res = await fetch('/api/admin/providers', {
+      const res = await customFetch(`${API_BASE}/api/admin/providers`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           type,
@@ -899,10 +937,9 @@ function EditProviderDialog({ provider }: { provider: Provider }) {
 
     setIsSaving(true)
     try {
-      const token = getToken()
-      const res = await fetch(`/api/admin/providers/${provider.id}`, {
+      const res = await customFetch(`${API_BASE}/api/admin/providers/${provider.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           type,

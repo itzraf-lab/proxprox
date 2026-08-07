@@ -1,3 +1,9 @@
 litellm[proxy]>=1.91.0
 prisma>=0.15.0
 uvicorn>=0.50.2
+# litellm 1.95.0 (latest) imports `get_flat_dependant` from
+# fastapi.dependencies.utils, which FastAPI removed in 0.140.7 — with 0.140.7+
+# the proxy crashes at import time. Pin below the removal until a litellm
+# release stops using the private symbol. (litellm declares fastapi<1.0, so
+# the resolver would otherwise happily pick an incompatible newer release.)
+fastapi>=0.136.3,<0.140.7

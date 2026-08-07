@@ -1,7 +1,15 @@
 model_list: []
 
 litellm_settings:
-  drop_params: true
+  # true  → stock LiteLLM behavior: params outside a provider's supported
+  #         list are silently DROPPED before the upstream call.
+  # false → qillin_passthrough.py takes over: every user param is forwarded
+  #         verbatim and the PROVIDER's own error answers bad params.
+  # The passthrough module (loaded via qillin_callback.py) reads this flag at
+  # request time, so this setting genuinely toggles between the two modes.
+  # A client may still force stock behavior for a single request by sending
+  # drop_params: true in the request body.
+  drop_params: false
   set_verbose: false
   # qillin_logger is a CustomLogger defined in qillin_callback.py (repo root).
   # It POSTs usage/cost data to the Qillin API server after every successful
@@ -20,3 +28,11 @@ general_settings:
   store_model_in_db: true
   disable_spend_logs: false
   spend_report_frequency: "1d"
+  # Force stream_options.include_usage=true on every streaming request, even
+  # when the client didn't ask for it. Without this, providers that only emit
+  # usage on request (OpenAI-compatible endpoints) stream no usage chunk and
+  # LiteLLM falls back to tiktoken ESTIMATES for billing — inaccurate by 5-15%.
+  # With it, all token counts (and therefore all Qredit charges) come from the
+  # provider's own usage accounting. Clients that didn't set include_usage will
+  # also receive the final usage chunk (OpenAI-spec-compliant: choices: []).
+  always_include_stream_usage: true
