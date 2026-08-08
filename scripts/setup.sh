@@ -1,76 +1,89 @@
 #!/usr/bin/env bash
-# setup.sh — one-command setup for Qillin on Linux.
+# setup.sh — one-command setup for Qillin on a barebones Linux VPS.
 #
-# What it does, in order:
-#   1. Installs system packages (build tools, curl, PostgreSQL) — apt/dnf/pacman
-#   2. Ensures Node.js 24+ (installs an official tarball into ~/.local if needed)
-#   3. Enables pnpm via Corepack
-#   4. Installs uv (Python package manager) if missing
-#   5. Starts PostgreSQL and creates the qillin role + qillin_litellm database
-#   6. Writes .env with freshly generated secrets (skipped if .env exists)
-#   7. Installs Node + Python dependencies (make install)
+# Works on a machine with nothing installed but a base OS. In order it:
+#   0. Detects the system (CPU/RAM/swap/disk/OS) and checks whether the spec
+#      is enough to run the server   [scripts/check.sh]
+#   1. Installs system packages: build tools, git, curl, Python 3, sudo if
+#      missing, PostgreSQL          — apt-get / dnf / yum / pacman / zypper
+#   2. Creates a /swapfile when RAM is low (a 1.9 GB VPS otherwise OOM-kills
+#      the LiteLLM proxy)
+#   3. Ensures Node.js 24+ (official tarball into ~/.local, PATH persisted
+#      to your shell profile)
+#   4. Enables pnpm via Corepack
+#   5. Installs uv (manages Python 3.13 for the LiteLLM venv)
+#   6. Starts PostgreSQL and creates the qillin role + qillin_litellm database
+#   7. Writes .env with freshly generated secrets (skipped if .env exists)
+#   8. Installs Node + Python dependencies (make install)
+#   9. Optionally installs nginx + certbot for 'make prod' (--with-nginx)
 #
 # The script is idempotent: completed steps are detected and skipped, so it is
-# safe to re-run after a failure.
+# safe to re-run after a failure. Re-checking the machine without changing
+# anything: ./scripts/setup.sh --check-only (or ./scripts/check.sh).
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Logging helpers, package-manager + hardware detection, ensure_swap,
+# check_dependencies and friends.
+source "$ROOT/scripts/check.sh"
+
 # ── Options ──────────────────────────────────────────────────────────────
 SKIP_SYSTEM=0
 SKIP_DB=0
+SKIP_SWAP=0 # read by ensure_swap (check.sh)
+WITH_NGINX=0
+CHECK_ONLY=0
 
 usage() {
   cat <<'EOF'
 Usage: ./scripts/setup.sh [options]
 
-Sets up Qillin on a fresh Linux machine:
-  system packages → Node.js 24 → pnpm → uv → PostgreSQL → .env → dependencies
+Sets up Qillin on a fresh, barebones Linux VPS:
+  system check → system packages → swap (if low RAM) → Node.js 24 → pnpm
+  → uv → PostgreSQL → .env → dependencies
 
 Options:
-  --skip-system   Do not install system packages or a local Node.js toolchain;
-                  only verify that the required tools exist.
-  --skip-db       Do not install or provision PostgreSQL (e.g. you will point
-                  DATABASE_URL at a remote database instead).
-  -h, --help      Show this help.
+  --check-only   Only detect the system + dependencies and print the spec
+                 verdict. Installs nothing, changes nothing.
+  --skip-system  Do not install system packages or a local Node.js toolchain;
+                 only verify that the required tools exist.
+  --skip-db      Do not install or provision PostgreSQL (e.g. you will point
+                 DATABASE_URL at a remote database instead).
+  --skip-swap    Do not create a swapfile, even when RAM is low (not
+                 recommended — the LiteLLM proxy gets OOM-killed without it).
+  --with-nginx   Also install nginx + certbot for production serving
+                 (see 'make prod' and the HTTPS section of HOW_TO_RUN.md).
+  -h, --help     Show this help.
 EOF
 }
 
 for arg in "$@"; do
   case "$arg" in
+    --check-only)  CHECK_ONLY=1 ;;
     --skip-system) SKIP_SYSTEM=1 ;;
-    --skip-db) SKIP_DB=1 ;;
+    --skip-db)     SKIP_DB=1 ;;
+    --skip-swap)   SKIP_SWAP=1 ;;
+    --with-nginx)  WITH_NGINX=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; usage >&2; exit 1 ;;
   esac
 done
 
-# ── Output helpers ───────────────────────────────────────────────────────
-if [ -t 1 ]; then
-  C_BLUE=$'\033[1;34m'; C_GREEN=$'\033[1;32m'; C_YELLOW=$'\033[1;33m'; C_RED=$'\033[1;31m'; C_RESET=$'\033[0m'
-else
-  C_BLUE=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_RESET=""
-fi
-info() { printf '%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
-ok()   { printf '%s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-warn() { printf '%s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
-die()  { printf '%sERROR:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
-
-# User-local tools (uv, a local Node install) land here — put it on PATH for
-# this session right away.
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-
-if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
-
-PKG=""
-for pm in apt-get dnf pacman; do
-  if command -v "$pm" >/dev/null 2>&1; then PKG="$pm"; break; fi
-done
-
 NODE_INSTALLED_LOCALLY=0
 GENERATED_ADMIN_PASSWORD=""
+
+# ── 0. System detection + spec verdict ───────────────────────────────────
+print_system_report
+check_dependencies
+spec_verdict || warn "Continuing anyway — the steps above explain what is too small and how to fix it."
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  [ "$SPEC_STATUS" != fail ] || exit 2
+  exit 0
+fi
 
 # ── 1. System packages ───────────────────────────────────────────────────
 install_system_deps() {
@@ -78,35 +91,23 @@ install_system_deps() {
     info "Skipping system package installation (--skip-system)"
     return
   fi
-  if [ -z "$PKG" ]; then
-    warn "No supported package manager found (apt-get/dnf/pacman)."
-    warn "Install these yourself, then re-run: a C/C++ build toolchain, curl,"
-    warn "xz, and PostgreSQL 14+."
-    return
-  fi
-  if [ -n "$SUDO" ] && ! command -v sudo >/dev/null 2>&1; then
-    die "sudo is required to install system packages. Re-run as root or use --skip-system."
-  fi
-
-  info "Installing system packages with $PKG (build tools, curl, PostgreSQL)..."
-  case "$PKG" in
-    apt-get)
-      $SUDO apt-get update -qq
-      $SUDO apt-get install -y build-essential curl ca-certificates xz-utils postgresql
-      ;;
-    dnf)
-      $SUDO dnf install -y gcc gcc-c++ make curl ca-certificates xz postgresql-server postgresql
-      ;;
-    pacman)
-      $SUDO pacman -Sy --needed --noconfirm base-devel curl ca-certificates xz postgresql
-      ;;
-  esac
-  ok "System packages installed"
+  step "System packages (build tools, git, curl, Python 3$([ "$SKIP_DB" -eq 1 ] || echo ', PostgreSQL'))"
+  local extra=()
+  [ "$SKIP_DB" -eq 1 ] || extra+=(postgresql)
+  install_base_packages "${extra[@]}"
 }
 
-# ── 2. Node.js 24+ ───────────────────────────────────────────────────────
-node_major() { node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'; }
+# ── 2. Swap (low-RAM safety net) ─────────────────────────────────────────
+# A 1.9 GB VPS OOM-kills the LiteLLM proxy (peaks near 800 MB RSS) the first
+# time several services run at once. ensure_swap is a no-op when swap or
+# enough RAM is already there.
+setup_swap() {
+  if [ "$SKIP_SYSTEM" -eq 1 ]; then return; fi
+  step "Swap check"
+  ensure_swap || warn "Proceeding without swap — watch for OOM kills ('sudo dmesg | grep -i oom')."
+}
 
+# ── 3. Node.js 24+ ───────────────────────────────────────────────────────
 ensure_node() {
   local major
   major="$(node_major)"
@@ -119,10 +120,10 @@ ensure_node() {
   fi
 
   local arch
-  case "$(uname -m)" in
+  case "$ARCH" in
     x86_64) arch="x64" ;;
     aarch64|arm64) arch="arm64" ;;
-    *) die "Unsupported CPU architecture: $(uname -m). Install Node.js 24+ manually from https://nodejs.org" ;;
+    *) die "Unsupported CPU architecture: $ARCH. Install Node.js 24+ manually from https://nodejs.org" ;;
   esac
 
   info "Installing Node.js 24 (official tarball, checksum-verified) into ~/.local ..."
@@ -148,10 +149,28 @@ ensure_node() {
   done
   hash -r
   NODE_INSTALLED_LOCALLY=1
+  persist_path
   ok "Installed $(node -v) to $dest"
 }
 
-# ── 3. pnpm (via Corepack) ───────────────────────────────────────────────
+# Put ~/.local/bin on PATH permanently so future shells find node/pnpm/uv.
+# Idempotent: the marker block is only appended once per profile file.
+persist_path() {
+  local marker="# >>> qillin toolchain (added by scripts/setup.sh) >>>"
+  local line='export PATH="$HOME/.local/bin:$PATH"'
+  local profile
+  for profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+    # .bashrc is always written; the others only when they already exist.
+    if [ "$profile" = "$HOME/.bashrc" ] || [ -f "$profile" ]; then
+      if ! grep -qF "$marker" "$profile" 2>/dev/null; then
+        printf '\n%s\n%s\n# <<< qillin toolchain <<<\n' "$marker" "$line" >> "$profile"
+        info "Added ~/.local/bin to PATH in $profile"
+      fi
+    fi
+  done
+}
+
+# ── 4. pnpm (via Corepack) ───────────────────────────────────────────────
 ensure_pnpm() {
   if command -v pnpm >/dev/null 2>&1; then
     ok "pnpm $(pnpm --version) already available"
@@ -168,11 +187,15 @@ ensure_pnpm() {
       || die "corepack enable failed. Run 'corepack enable' manually."
   fi
   hash -r
+  # Corepack would otherwise ask interactively before downloading pnpm, which
+  # hangs a non-interactive setup run.
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
   command -v pnpm >/dev/null 2>&1 || die "pnpm is still not on PATH after 'corepack enable'."
+  pnpm --version >/dev/null 2>&1 || die "pnpm shim exists but could not fetch pnpm. Check your network connection."
   ok "pnpm $(pnpm --version)"
 }
 
-# ── 4. uv (Python package manager) ───────────────────────────────────────
+# ── 5. uv (Python package manager) ───────────────────────────────────────
 ensure_uv() {
   if command -v uv >/dev/null 2>&1; then
     ok "uv $(uv --version | awk '{print $2}') already installed"
@@ -185,29 +208,43 @@ ensure_uv() {
   ok "uv $(uv --version | awk '{print $2}')"
 }
 
-# ── 5. PostgreSQL ────────────────────────────────────────────────────────
+# ── 6. PostgreSQL ────────────────────────────────────────────────────────
 ensure_postgres() {
   if [ "$SKIP_DB" -eq 1 ]; then
-    info "Skipping PostgreSQL setup (--skip-db)"
+    info "Skipping PostgreSQL setup (--skip-db) — point DATABASE_URL in .env at your database."
     return
   fi
+  step "PostgreSQL (role qillin, database qillin_litellm)"
   command -v psql >/dev/null 2>&1 \
     || die "psql not found. Install PostgreSQL 14+ (or drop --skip-db / --skip-system)."
 
-  # Fedora/RHEL and Arch need an explicit initdb; Debian/Ubuntu packages
+  local pg_major
+  pg_major="$(psql_major)"
+  if [ -n "$pg_major" ] && [ "$pg_major" -lt 14 ]; then
+    warn "PostgreSQL $pg_major is older than 14 — LiteLLM migrations may fail."
+    warn "Upgrade PostgreSQL (e.g. the official PostgreSQL apt/yum repo) and re-run."
+  fi
+
+  # Fedora/RHEL, SUSE and Arch need an explicit initdb; Debian/Ubuntu packages
   # initialize and start a cluster automatically.
-  if [ "$PKG" = "dnf" ] && [ ! -d /var/lib/pgsql/data/base ]; then
-    info "Initializing the PostgreSQL data directory (dnf)..."
-    $SUDO postgresql-setup --initdb || warn "postgresql-setup --initdb failed — initialize PostgreSQL manually."
-  elif [ "$PKG" = "pacman" ] && [ ! -d /var/lib/postgres/data/base ]; then
+  if { [ "$PM" = "dnf" ] || [ "$PM" = "yum" ]; } && [ ! -d /var/lib/pgsql/data/base ]; then
+    info "Initializing the PostgreSQL data directory ($PM)..."
+    $SUDO postgresql-setup --initdb \
+      || $SUDO -u postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/pgsql/data \
+      || warn "initdb failed — initialize PostgreSQL manually."
+  elif [ "$PM" = "zypper" ] && [ ! -d /var/lib/pgsql/data/base ]; then
+    info "Initializing the PostgreSQL data directory (zypper)..."
+    $SUDO -u postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/pgsql/data \
+      || warn "initdb failed — initialize PostgreSQL manually."
+  elif [ "$PM" = "pacman" ] && [ ! -d /var/lib/postgres/data/base ]; then
     info "Initializing the PostgreSQL data directory (pacman)..."
     $SUDO -u postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/postgres/data \
       || warn "initdb failed — initialize PostgreSQL manually."
   fi
 
-  if command -v systemctl >/dev/null 2>&1; then
+  if [ "$HAS_SYSTEMD" -eq 1 ]; then
     $SUDO systemctl enable --now postgresql 2>/dev/null \
-      || warn "Could not start PostgreSQL via systemctl (no systemd?). Trying 'service'..."
+      || warn "Could not start PostgreSQL via systemctl. Trying 'service'..."
   fi
   if ! pg_isready -q 2>/dev/null; then
     $SUDO service postgresql start 2>/dev/null || true
@@ -222,7 +259,7 @@ is running (e.g. 'sudo systemctl start postgresql') and re-run this script."
   ok "PostgreSQL database ready (role: qillin, db: qillin_litellm)"
 }
 
-# ── 6. .env ──────────────────────────────────────────────────────────────
+# ── 7. .env ──────────────────────────────────────────────────────────────
 gen_secret() { # $1 = number of random bytes → hex string of 2×$1 characters
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex "$1"
@@ -255,33 +292,50 @@ setup_env() {
   ok ".env created"
 }
 
-# ── 7. Dependencies ──────────────────────────────────────────────────────
+# ── 8. Dependencies ──────────────────────────────────────────────────────
 install_deps() {
   command -v make >/dev/null 2>&1 || die "make not found. Install your distro's build tools and re-run."
-  info "Installing Node.js and Python dependencies (make install)..."
+  step "Node.js + Python dependencies (make install)"
   info "This can take a few minutes (better-sqlite3 is compiled from source)."
   make install
   ok "Dependencies installed"
 }
 
+# ── 9. nginx (optional, production) ──────────────────────────────────────
+install_nginx() {
+  if [ "$WITH_NGINX" -eq 0 ]; then return; fi
+  step "nginx + certbot (--with-nginx)"
+  if command -v nginx >/dev/null 2>&1; then
+    ok "nginx $(nginx -v 2>&1 | grep -oE '[0-9.]+') already installed"
+  else
+    pm_install nginx || warn "Could not install nginx — install it manually before 'make prod'."
+  fi
+  if command -v certbot >/dev/null 2>&1; then
+    ok "certbot already installed"
+  else
+    pm_install certbot || warn "Could not install certbot — only needed for HTTPS; see HOW_TO_RUN.md."
+  fi
+  info "Site config is applied by 'make prod' (see the Production section of HOW_TO_RUN.md)."
+}
+
 # ── Run ──────────────────────────────────────────────────────────────────
 install_system_deps
+setup_swap
 ensure_node
 ensure_pnpm
 ensure_uv
 ensure_postgres
 setup_env
 install_deps
+install_nginx
 
 # ── Summary ──────────────────────────────────────────────────────────────
 printf '\n%s%s\n' "$C_GREEN" "════════════════ Qillin setup complete ════════════════$C_RESET"
 if [ "$NODE_INSTALLED_LOCALLY" -eq 1 ]; then
-  cat <<EOF
+  cat <<'EOF'
 
-Node.js was installed into ~/.local. Make it permanent by adding this line
-to your shell profile (~/.bashrc, ~/.zshrc, ...):
-
-    export PATH="\$HOME/.local/bin:\$PATH"
+Node.js was installed into ~/.local and your shell profile was updated.
+Open a new shell (or run 'source ~/.bashrc') so plain 'node'/'pnpm' work.
 EOF
 fi
 if [ -n "$GENERATED_ADMIN_PASSWORD" ]; then
@@ -296,12 +350,24 @@ Edit .env now if you want a different admin email/password — they are seeded
 into the database on the API server's first start.
 EOF
 fi
+sys_detect
+if [ "$MEM_TOTAL_MB" -lt "$REQ_MEM_REC" ]; then
+  cat <<EOF
+
+Note: this machine has $(mb_to_human "$MEM_TOTAL_MB") RAM — below the
+recommended $(mb_to_human $REQ_MEM_REC). Prefer 'make prod' over 'make dev'
+(the Vite dev server is the most memory-hungry piece), and keep an eye on
+'sudo dmesg | grep -i oom' if a service dies unexpectedly.
+EOF
+fi
 cat <<'EOF'
 
 Next steps:
-    make dev        # start proxy + API + web together
+    make dev        # start proxy + API + web together (development)
+    make prod       # production: static frontend via nginx + compiled API
     make update     # later: update all deps (LiteLLM, npm packages, ...)
+    make check      # re-run the system + dependency check at any time
 
-Then open http://localhost:5173 and sign in with the admin account.
+Then open http://localhost:5173 (dev) and sign in with the admin account.
 See HOW_TO_RUN.md for details and troubleshooting.
 EOF

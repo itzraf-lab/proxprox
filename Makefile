@@ -7,12 +7,16 @@ PY := $(VENV)/bin/python
 # Prefix that loads .env into a recipe's shell.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
-.PHONY: help setup update install setup-python db-setup typecheck build proxy api web dev
+.PHONY: help setup check update install setup-python db-setup typecheck build proxy api web dev prod prod-nginx
 
 help:
 	@echo "Qillin targets:"
-	@echo "  make setup         One-command setup on a fresh Linux machine (scripts/setup.sh)"
+	@echo "  make setup         One-command setup on a barebones Linux VPS (scripts/setup.sh)"
+	@echo "                     Pass flags via ARGS, e.g. make setup ARGS='--with-nginx'"
+	@echo "  make check         Detect hardware + dependencies, print a spec verdict"
+	@echo "                     (scripts/check.sh; ARGS='--install' installs missing pkgs)"
 	@echo "  make update        Update all deps to the latest versions (scripts/update.sh)"
+	@echo "                     ARGS='--pull' also git-pulls the latest code first"
 	@echo "  make install       Install Node deps (pnpm) + Python venv for LiteLLM"
 	@echo "                     (uses uv if available, else system python3 + pip)"
 	@echo "  make db-setup      Create the local PostgreSQL role + database for LiteLLM"
@@ -22,17 +26,27 @@ help:
 	@echo "  make api           Run the Express API server (port 8080)"
 	@echo "  make web           Run the React frontend     (port 5173)"
 	@echo "  make dev           Run all three services together"
+	@echo "  make prod          Production mode: build, point nginx at the static"
+	@echo "                     frontend, run LiteLLM + the compiled API server"
+	@echo "  make prod-nginx    Only (re)install the production nginx config"
 
 # ── Setup ────────────────────────────────────────────────────────────────
-# One-command setup for a fresh Linux machine (system packages, Node 24,
-# pnpm, uv, PostgreSQL, .env with generated secrets, dependencies).
+# One-command setup for a barebones Linux VPS: detects the system (and tells
+# you whether the spec is enough), installs system packages, creates a
+# swapfile on low-RAM machines, then Node 24, pnpm, uv, PostgreSQL, .env with
+# generated secrets, and all dependencies.
 setup:
-	./scripts/setup.sh
+	./scripts/setup.sh $(ARGS)
+
+# Report the machine's hardware + dependency status and whether the spec is
+# sufficient. ARGS='--install' installs missing required packages.
+check:
+	./scripts/check.sh $(ARGS)
 
 # Update all dependencies to their latest versions (Node + Python/LiteLLM),
-# then type-check the workspace.
+# then type-check the workspace. ARGS='--pull' git-pulls the code first.
 update:
-	./scripts/update.sh
+	./scripts/update.sh $(ARGS)
 
 install: setup-python
 	pnpm install
@@ -109,3 +123,53 @@ dev:
 		pnpm --filter @workspace/api-server run dev & \
 		pnpm --filter @workspace/qillin-web run dev & \
 		wait
+
+# ── Production ─────────────────────────────────────────────────────────────
+# nginx serves the built static frontend (apps/web/dist/public) and proxies
+# /api + /v1 to the Express API on :8080 — same split as the Vite dev proxy,
+# but with no dependency on the dev server staying alive.
+WEB_DIST := apps/web/dist/public
+NGINX_SITE_CONF := scripts/nginx-prod.conf
+# Sites that currently proxy to the Vite dev server; prod-nginx rewrites them
+# to serve the static build instead, keeping each site's server_name.
+# Originals are backed up once to <site>.dev-bak.
+NGINX_DEV_SITES := app qillin
+
+# Full production bring-up: typecheck + build everything, install the nginx
+# config, then run LiteLLM (:8000) and the compiled API server (:8080).
+# The frontend needs no process — nginx serves it from disk. Ctrl-C stops both.
+prod: build prod-nginx
+	@echo ">> prod up: nginx :80 (static) -> api :8080 -> litellm :8000"
+	$(LOAD_ENV) export NODE_ENV=production; trap 'kill 0' EXIT; \
+		PATH="$(CURDIR)/$(VENV)/bin:$$PATH" $(PY) apps/litellm-proxy/start.py & \
+		pnpm --filter @workspace/api-server run start & \
+		wait
+
+# Rewrites the dev nginx sites to serve $(WEB_DIST) directly. Needs sudo.
+prod-nginx:
+	@test -d $(WEB_DIST) || { \
+		echo "ERROR: $(WEB_DIST) is missing — run 'make build' first (or just 'make prod')."; \
+		exit 1; \
+	}
+	@for site in $(NGINX_DEV_SITES); do \
+		conf=/etc/nginx/sites-available/$$site; \
+		[ -f $$conf ] || continue; \
+		server_name=$$(grep -oP 'server_name\s+\K[^;]+' $$conf | head -1 | xargs); \
+		server_name=$${server_name:-_}; \
+		template=$(NGINX_SITE_CONF); \
+		if sudo test -f /etc/letsencrypt/live/$$server_name/fullchain.pem; then \
+			template=scripts/nginx-prod-ssl.conf; \
+			echo ">> found Let's Encrypt cert for $$server_name — keeping HTTPS"; \
+		fi; \
+		[ -f $$conf.dev-bak ] || sudo cp $$conf $$conf.dev-bak; \
+		sed -e "s|@WEB_ROOT@|$(CURDIR)/$(WEB_DIST)|g" \
+		    -e "s|@SERVER_NAME@|$$server_name|g" $$template \
+			| sudo tee $$conf >/dev/null; \
+		sudo ln -sf /etc/nginx/sites-available/$$site /etc/nginx/sites-enabled/$$site; \
+		echo ">> $$conf now serves $(WEB_DIST) (previous config: $$conf.dev-bak)"; \
+	done
+	@# nginx workers (www-data) must traverse into the repo and read the build.
+	@# o+x on each parent dir allows traversal without making ~ listable.
+	@dir=$(CURDIR); while [ $$dir != / ]; do sudo chmod o+x $$dir || exit 1; dir=$$(dirname $$dir); done
+	sudo chmod -R o+rX $(WEB_DIST)
+	sudo nginx -t && sudo systemctl reload nginx
