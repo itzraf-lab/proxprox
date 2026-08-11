@@ -51,6 +51,13 @@ step() { printf '\n%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 
 # User-local tools (uv, a local Node install) land here — make them visible.
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+# System binaries Qillin probes for (nginx, update-ca-certificates, swapon,
+# runuser) live in sbin, which Debian leaves OUT of a non-root PATH — append
+# it (last, so user tools still win) or detection reports false "missing".
+case ":$PATH:" in
+  *:/usr/sbin:*) ;;
+  *) export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" ;;
+esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -98,6 +105,8 @@ pm_refresh() {
 # pm_install <generic-token>... — install packages, mapping generic tokens to
 # per-distro package names. Tokens: ca-certificates curl wget git tar xz
 # openssl sudo build-tools python3 python3-venv postgresql nginx certbot
+# ('certbot' also pulls in the nginx plugin, so the documented
+# 'sudo certbot --nginx -d …' works right after setup.)
 pm_install() {
   [ "$#" -gt 0 ] || return 0
   if [ -z "$PM" ]; then
@@ -121,6 +130,12 @@ pm_install() {
       zypper:build-tools)      pkgs+=(gcc gcc-c++ make) ;;
       zypper:python3-venv)     pkgs+=(python3) ;;
       zypper:postgresql)       pkgs+=(postgresql-server postgresql) ;;
+      # certbot alone can't run 'certbot --nginx' — the nginx plugin is a
+      # separate package on Debian/RHEL/SUSE (bundled differently on Arch).
+      apt-get:certbot)              pkgs+=(certbot python3-certbot-nginx) ;;
+      dnf:certbot|yum:certbot)      pkgs+=(certbot python3-certbot-nginx) ;;
+      pacman:certbot)               pkgs+=(certbot certbot-nginx) ;;
+      zypper:certbot)               pkgs+=(certbot python3-certbot-nginx) ;;
       *)                       pkgs+=("$token") ;; # identical name everywhere
     esac
   done
@@ -152,9 +167,9 @@ sys_detect() {
     MEM_TOTAL_MB=0; MEM_AVAIL_MB=0; SWAP_TOTAL_MB=0
   fi
 
-  DISK_FREE_MB="$(df -Pm "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {print $4}')"
+  DISK_FREE_MB="$(df -Pm "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
   DISK_FREE_MB="${DISK_FREE_MB:-0}"
-  ROOT_FSTYPE="$(df --output=fstype "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {print $1}')"
+  ROOT_FSTYPE="$(df --output=fstype "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {print $1}' || true)"
   ROOT_FSTYPE="${ROOT_FSTYPE:-unknown}"
 
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
@@ -307,9 +322,30 @@ ensure_swap() {
 }
 
 # ── Dependency checking ───────────────────────────────────────────────────
-node_major() { node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'; }
-psql_major() { psql --version 2>/dev/null | grep -oE '[0-9]+' | head -1; }
-python3_version() { python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null; }
+# The version probes below are pure detection: a missing tool must yield an
+# EMPTY result and a ZERO exit status. The trailing '|| true' is load-bearing —
+# these run under 'set -euo pipefail' (setup.sh/update.sh), where a pipeline
+# whose left side is a missing command (127) would otherwise abort the whole
+# setup exactly when the machine is bare enough to need it.
+node_major() { node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true; }
+psql_major() { psql --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true; }
+python3_version() { python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true; }
+
+# Run a command as the postgres OS user — as root via runuser (util-linux is
+# Essential on every supported distro), as anyone else via sudo. Needed because
+# '$SUDO -u postgres …' is broken when SUDO is empty (a root-only VPS).
+as_postgres() {
+  if [ "$(id -u)" -eq 0 ]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u postgres -- "$@"
+    else # last resort for minimal images without runuser
+      su -s /bin/sh postgres -c "$(printf '%q ' "$@")"
+    fi
+  else
+    require_privileges "Running commands as the postgres user"
+    $SUDO -u postgres "$@"
+  fi
+}
 
 # One row per tool: status + whether it is required. Fills MISSING_TOKENS
 # with the pm_install tokens for everything required that is absent.

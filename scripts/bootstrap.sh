@@ -58,6 +58,17 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 if [ -n "$SUDO" ] && ! command -v sudo >/dev/null 2>&1; then
   die "Need root or sudo to install git. Re-run as root."
 fi
+# Prime sudo when it requires a password. bootstrap is often piped in via
+# curl|bash (stdin is the script stream, not a terminal), so ask on /dev/tty.
+if [ -n "$SUDO" ] && ! sudo -n true 2>/dev/null; then
+  if [ -t 0 ]; then
+    sudo -v || die "sudo authentication failed."
+  elif [ -r /dev/tty ]; then
+    sudo -v < /dev/tty || die "sudo authentication failed."
+  else
+    die "sudo requires a password but there is no terminal to ask on. Run 'sudo -v' first, then re-run."
+  fi
+fi
 
 # ── Package manager → git + curl ─────────────────────────────────────────
 PM=""

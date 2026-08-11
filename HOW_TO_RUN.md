@@ -37,6 +37,10 @@ cd proxprox
 make dev                # start all three services
 ```
 
+On a truly minimal image even `make` may be missing — `./scripts/setup.sh`
+works regardless (it installs `make` as part of the build tools); use
+`make setup` only when `make` already exists.
+
 **2. Just checking a machine** — detect the hardware, list which dependencies
 are present/missing, and get a verdict on whether the spec is enough, without
 changing anything:
@@ -59,8 +63,8 @@ idempotent — safe to re-run after a failure.
 Options: `--check-only` (detect + report, change nothing), `--skip-system`
 (don't install system packages or Node — verify only), `--skip-db` (don't
 provision PostgreSQL, e.g. when using a remote `DATABASE_URL`), `--skip-swap`
-(never create a swapfile), `--with-nginx` (also install nginx + certbot for
-production), `--help`.
+(never create a swapfile), `--with-nginx` (also install nginx + certbot with
+its nginx plugin, for production), `--help`.
 
 Prefer to do it by hand? Follow the manual steps below.
 
@@ -182,6 +186,9 @@ This is a single command that:
    serves the static frontend directly and proxies `/api` + `/v1` to the API
    server on :8080 — then validates with `nginx -t` and reloads. Requires
    sudo. To redo just this step later: `make prod-nginx`.
+   On a fresh VPS where none of those sites exist yet, `prod-nginx` instead
+   installs a catch-all site (`server_name _`, replacing the stock nginx
+   `default` site) so production works out of the box.
 3. Starts the LiteLLM proxy (:8000) and the compiled API server (:8080) with
    `NODE_ENV=production`. Ctrl-C stops both; the frontend needs no process at
    all.
@@ -192,7 +199,8 @@ unlike `make dev`, there is no hot reload.
 
 ### HTTPS
 
-With a DNS record pointing at the server, one command adds TLS:
+With a DNS record pointing at the server, one command adds TLS (the nginx
+plugin for certbot is installed by `setup.sh --with-nginx`):
 
 ```bash
 sudo certbot --nginx -d your.domain.example   # then re-run: make prod-nginx

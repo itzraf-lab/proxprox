@@ -93,11 +93,15 @@ setup-python:
 	fi
 
 # Idempotent local PostgreSQL provisioning (role: qillin / db: qillin_litellm).
+# AS_POSTGRES runs a command as the postgres OS user: root uses runuser
+# (util-linux, present on every supported distro), everyone else uses sudo —
+# hardcoding 'sudo' breaks on a root-only VPS that has no sudo installed.
+AS_POSTGRES := $(shell if [ "$$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then echo 'runuser -u postgres --'; else echo 'sudo -u postgres'; fi)
 db-setup:
-	sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='qillin'" | grep -q 1 || \
-		sudo -u postgres psql -c "CREATE ROLE qillin LOGIN PASSWORD 'qillin';"
-	sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='qillin_litellm'" | grep -q 1 || \
-		sudo -u postgres psql -c "CREATE DATABASE qillin_litellm OWNER qillin;"
+	$(AS_POSTGRES) psql -tc "SELECT 1 FROM pg_roles WHERE rolname='qillin'" | grep -q 1 || \
+		$(AS_POSTGRES) psql -c "CREATE ROLE qillin LOGIN PASSWORD 'qillin';"
+	$(AS_POSTGRES) psql -tc "SELECT 1 FROM pg_database WHERE datname='qillin_litellm'" | grep -q 1 || \
+		$(AS_POSTGRES) psql -c "CREATE DATABASE qillin_litellm OWNER qillin;"
 
 # ── Quality ──────────────────────────────────────────────────────────────
 typecheck:
@@ -146,12 +150,21 @@ prod: build prod-nginx
 		wait
 
 # Rewrites the dev nginx sites to serve $(WEB_DIST) directly. Needs sudo.
+# On a fresh VPS none of the dev sites exist yet — in that case install a
+# catch-all site (server_name _) so production works out of the box.
 prod-nginx:
 	@test -d $(WEB_DIST) || { \
 		echo "ERROR: $(WEB_DIST) is missing — run 'make build' first (or just 'make prod')."; \
 		exit 1; \
 	}
-	@for site in $(NGINX_DEV_SITES); do \
+	@# nginx lives in /usr/sbin, which Debian omits from a non-root PATH.
+	@{ command -v nginx >/dev/null 2>&1 || [ -x /usr/sbin/nginx ]; } || { \
+		echo "ERROR: nginx is not installed. Run './scripts/setup.sh --with-nginx',"; \
+		echo "       or install it yourself: sudo apt-get install nginx"; \
+		exit 1; \
+	}
+	@rewritten=0; \
+	for site in $(NGINX_DEV_SITES); do \
 		conf=/etc/nginx/sites-available/$$site; \
 		[ -f $$conf ] || continue; \
 		server_name=$$(grep -oP 'server_name\s+\K[^;]+' $$conf | head -1 | xargs); \
@@ -167,9 +180,22 @@ prod-nginx:
 			| sudo tee $$conf >/dev/null; \
 		sudo ln -sf /etc/nginx/sites-available/$$site /etc/nginx/sites-enabled/$$site; \
 		echo ">> $$conf now serves $(WEB_DIST) (previous config: $$conf.dev-bak)"; \
-	done
+		rewritten=1; \
+	done; \
+	if [ $$rewritten -eq 0 ]; then \
+		echo ">> no existing sites found ($(NGINX_DEV_SITES)) — installing a fresh catch-all site 'qillin'"; \
+		sed -e "s|@WEB_ROOT@|$(CURDIR)/$(WEB_DIST)|g" \
+		    -e "s|@SERVER_NAME@|_|g" $(NGINX_SITE_CONF) \
+			| sudo tee /etc/nginx/sites-available/qillin >/dev/null; \
+		sudo ln -sf /etc/nginx/sites-available/qillin /etc/nginx/sites-enabled/qillin; \
+		if [ -L /etc/nginx/sites-enabled/default ]; then \
+			sudo rm -f /etc/nginx/sites-enabled/default; \
+			echo ">> disabled the stock nginx 'default' site (it would otherwise answer :80)"; \
+		fi; \
+		echo ">> /etc/nginx/sites-available/qillin now serves $(WEB_DIST)"; \
+	fi
 	@# nginx workers (www-data) must traverse into the repo and read the build.
 	@# o+x on each parent dir allows traversal without making ~ listable.
 	@dir=$(CURDIR); while [ $$dir != / ]; do sudo chmod o+x $$dir || exit 1; dir=$$(dirname $$dir); done
 	sudo chmod -R o+rX $(WEB_DIST)
-	sudo nginx -t && sudo systemctl reload nginx
+	sudo nginx -t && { sudo systemctl reload nginx 2>/dev/null || sudo service nginx reload; }

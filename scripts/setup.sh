@@ -85,6 +85,22 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   exit 0
 fi
 
+# Prime sudo once, up front, when it requires a password. Without this, the
+# first $SUDO call deep inside the run would stall an unattended setup on a
+# hidden password prompt (or fail outright when stdin is a pipe, e.g. via
+# bootstrap.sh). Root and passwordless sudo skip this entirely.
+if [ "$(id -u)" -ne 0 ] && [ "$HAS_SUDO" -eq 1 ] && ! sudo -n true 2>/dev/null; then
+  info "This setup needs sudo for system packages and PostgreSQL."
+  if [ -t 0 ]; then
+    sudo -v || die "sudo authentication failed."
+  elif [ -r /dev/tty ]; then
+    sudo -v < /dev/tty || die "sudo authentication failed."
+  else
+    die "sudo requires a password but there is no terminal to ask on.
+Run 'sudo -v' first (or re-run from an interactive shell), then re-run this script."
+  fi
+fi
+
 # ── 1. System packages ───────────────────────────────────────────────────
 install_system_deps() {
   if [ "$SKIP_SYSTEM" -eq 1 ]; then
@@ -230,15 +246,15 @@ ensure_postgres() {
   if { [ "$PM" = "dnf" ] || [ "$PM" = "yum" ]; } && [ ! -d /var/lib/pgsql/data/base ]; then
     info "Initializing the PostgreSQL data directory ($PM)..."
     $SUDO postgresql-setup --initdb \
-      || $SUDO -u postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/pgsql/data \
+      || as_postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/pgsql/data \
       || warn "initdb failed — initialize PostgreSQL manually."
   elif [ "$PM" = "zypper" ] && [ ! -d /var/lib/pgsql/data/base ]; then
     info "Initializing the PostgreSQL data directory (zypper)..."
-    $SUDO -u postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/pgsql/data \
+    as_postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/pgsql/data \
       || warn "initdb failed — initialize PostgreSQL manually."
   elif [ "$PM" = "pacman" ] && [ ! -d /var/lib/postgres/data/base ]; then
     info "Initializing the PostgreSQL data directory (pacman)..."
-    $SUDO -u postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/postgres/data \
+    as_postgres initdb --locale=C.UTF-8 -E UTF8 -D /var/lib/postgres/data \
       || warn "initdb failed — initialize PostgreSQL manually."
   fi
 
@@ -251,7 +267,7 @@ ensure_postgres() {
   fi
 
   info "Creating the qillin role and qillin_litellm database (idempotent)..."
-  if ! $SUDO -u postgres psql -c 'SELECT 1' >/dev/null 2>&1; then
+  if ! as_postgres psql -c 'SELECT 1' >/dev/null 2>&1; then
     die "Cannot reach PostgreSQL as the postgres superuser. Make sure the server
 is running (e.g. 'sudo systemctl start postgresql') and re-run this script."
   fi
@@ -305,13 +321,16 @@ install_deps() {
 install_nginx() {
   if [ "$WITH_NGINX" -eq 0 ]; then return; fi
   step "nginx + certbot (--with-nginx)"
-  if command -v nginx >/dev/null 2>&1; then
-    ok "nginx $(nginx -v 2>&1 | grep -oE '[0-9.]+') already installed"
+  # nginx/certbot live in /usr/sbin — on Debian that directory is not on a
+  # non-root PATH, so probe the well-known locations too (pm_install maps
+  # 'certbot' to certbot + the nginx plugin package).
+  if command -v nginx >/dev/null 2>&1 || [ -x /usr/sbin/nginx ]; then
+    ok "nginx already installed"
   else
     pm_install nginx || warn "Could not install nginx — install it manually before 'make prod'."
   fi
-  if command -v certbot >/dev/null 2>&1; then
-    ok "certbot already installed"
+  if command -v certbot >/dev/null 2>&1 || [ -x /usr/bin/certbot ]; then
+    ok "certbot already installed (with the nginx plugin)"
   else
     pm_install certbot || warn "Could not install certbot — only needed for HTTPS; see HOW_TO_RUN.md."
   fi
