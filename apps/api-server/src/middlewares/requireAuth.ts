@@ -91,6 +91,9 @@ export function requireApiOrJwtAuth(req: AuthRequest, res: Response, next: NextF
     }
     req.headers["x-qillin-litellm-key"] = LITELLM_MASTER_KEY;
     req.headers["x-user-id"] = jwtUser.id;
+    // No API key is attached to JWT requests — strip any client-sent value
+    // so per-key spend cannot be forged.
+    delete req.headers["x-qillin-key-hash"];
     return next();
   }
 
@@ -129,6 +132,10 @@ export function requireApiOrJwtAuth(req: AuthRequest, res: Response, next: NextF
       // Use the key's own LiteLLM key if available, otherwise fall back to master key
       req.headers["x-qillin-litellm-key"] = apiKey.litellm_key ?? LITELLM_MASTER_KEY;
       req.headers["x-user-id"] = user.id;
+      // Tag the request with the authenticated key's hash (overwrites any
+      // client-sent value) so the LiteLLM callback can attribute spend to
+      // this specific key in api_keys.spend.
+      req.headers["x-qillin-key-hash"] = hash;
       return next();
     }
   }

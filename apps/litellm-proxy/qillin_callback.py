@@ -158,6 +158,15 @@ class QillinLogger(CustomLogger):
             tokens_out = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
             cache_read_tokens, cache_write_tokens = self._extract_cache_tokens(usage) if usage else (0, 0)
 
+            # Per-key spend attribution: the Qillin API server injects
+            # x-qillin-key-hash AFTER authenticating an sk-qillin-* key
+            # (overwriting any client-sent value), so it is server-attested.
+            # JWT-authed requests carry no key hash.
+            lp = kwargs.get("litellm_params") or {}
+            lp_headers = (lp.get("metadata") or {}).get("headers") or {}
+            top_headers = (kwargs.get("metadata") or {}).get("headers") or {}
+            key_hash = lp_headers.get("x-qillin-key-hash") or top_headers.get("x-qillin-key-hash")
+
             latency_ms = 0
             if start_time and end_time:
                 try:
@@ -174,6 +183,7 @@ class QillinLogger(CustomLogger):
                 "cacheWriteTokens": cache_write_tokens,
                 "spend": float(response_cost or 0.0),
                 "latencyMs": latency_ms,
+                "keyHash": key_hash,
             }
 
             # Post in a background thread so we never block LiteLLM's response loop

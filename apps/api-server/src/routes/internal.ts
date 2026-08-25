@@ -41,10 +41,10 @@ router.use(validateInternalKey);
 /**
  * POST /api/internal/litellm-event
  * Body: { userId, model, tokensIn, tokensOut, spend, latencyMs?,
- *         cacheReadTokens?, cacheWriteTokens? }
+ *         cacheReadTokens?, cacheWriteTokens?, keyHash? }
  */
 router.post("/litellm-event", (req, res) => {
-  const { userId, model, tokensIn, tokensOut, spend, latencyMs, cacheReadTokens, cacheWriteTokens } = req.body ?? {};
+  const { userId, model, tokensIn, tokensOut, spend, latencyMs, cacheReadTokens, cacheWriteTokens, keyHash } = req.body ?? {};
 
   if (!userId || !model) {
     res.status(400).json({ error: "userId and model are required" });
@@ -64,6 +64,12 @@ router.post("/litellm-event", (req, res) => {
   // (see lib/sync.ts expectedCostParams), so its computed cost already
   // reflects the admin-configured rates — including for cached requests.
   const spendAmount = Math.max(0, Number(spend) || 0);
+
+  // keyHash comes from the x-qillin-key-hash header the auth middleware sets
+  // after authenticating an sk-qillin-* key — never from the client. Validate
+  // the shape (sha256 hex) defensively before using it in a query.
+  const keyHashStr =
+    typeof keyHash === "string" && /^[a-f0-9]{64}$/i.test(keyHash) ? keyHash.toLowerCase() : null;
 
   // Look up user email for the log record
   const user = db
@@ -91,6 +97,13 @@ router.post("/litellm-event", (req, res) => {
     if (spendAmount > 0) {
       db.prepare("UPDATE users SET qredits = MAX(0, qredits - ?), updated_at = datetime('now') WHERE id = ?")
         .run(spendAmount, userId);
+
+      // Attribute spend to the API key that made the request. Scoped by
+      // user_id so a hash that doesn't belong to this user matches nothing.
+      if (keyHashStr) {
+        db.prepare("UPDATE api_keys SET spend = spend + ? WHERE key_hash = ? AND user_id = ?")
+          .run(spendAmount, keyHashStr, userId);
+      }
     }
   });
 
