@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Shell } from "@/components/layout"
 import { useGetModels } from "@workspace/api-client-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { formatCurrency } from "@/lib/utils"
@@ -15,9 +15,8 @@ export default function Models() {
   const [search, setSearch] = useState("")
 
   const filteredModels = models?.filter(m => 
-    m.name.toLowerCase().includes(search.toLowerCase()) || 
-    m.provider.toLowerCase().includes(search.toLowerCase()) ||
-    m.litellmModel.toLowerCase().includes(search.toLowerCase())
+    m.name.toLowerCase().includes(search.toLowerCase()) ||
+    m.provider.toLowerCase().includes(search.toLowerCase())
   ) || []
 
   return (
@@ -72,9 +71,6 @@ export default function Models() {
                           <CardTitle className="font-mono text-lg truncate leading-tight group-hover:text-primary transition-colors" title={model.name}>
                             {model.name}
                           </CardTitle>
-                          <CardDescription className="font-mono text-xs mt-1 truncate" title={model.litellmModel}>
-                            {model.litellmModel}
-                          </CardDescription>
                         </div>
                       </div>
                     </CardHeader>
