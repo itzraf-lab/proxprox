@@ -945,10 +945,21 @@ async function registerModelDeployments(
   }
 }
 
-// POST /api/admin/providers/:providerId/fetch-models
+/**
+ * POST /api/admin/providers/:providerId/fetch-models
+ *
+ * Re-fetches the provider's model list. The admin may paste a fresh apiKey,
+ * but when omitted we fall back to the provider's primary stored key — this
+ * is what lets an already-configured provider re-sync its catalog without
+ * re-entering credentials.
+ *
+ * Each returned model is annotated with `inCatalog` so the UI can offer only
+ * genuinely new models for import (model names are globally unique — a
+ * duplicate would merge routing pools in LiteLLM).
+ */
 router.post("/providers/:providerId/fetch-models", async (req: AuthRequest, res) => {
   const { providerId } = req.params;
-  const { apiKey, baseUrl } = req.body;
+  const { apiKey, baseUrl } = req.body ?? {};
 
   const provider = db.prepare("SELECT * FROM providers WHERE id = ?").get(providerId) as any;
   if (!provider) {
@@ -956,8 +967,19 @@ router.post("/providers/:providerId/fetch-models", async (req: AuthRequest, res)
     return;
   }
 
-  if (!apiKey) {
-    res.status(400).json({ error: "apiKey is required" });
+  let resolvedKey: string | undefined = apiKey;
+  if (!resolvedKey) {
+    const stored = db.prepare(`
+      SELECT k.key_value FROM provider_api_keys k
+      LEFT JOIN provider_base_urls bu ON k.base_url_id = bu.id
+      WHERE k.provider_id = ?
+      ORDER BY COALESCE(bu.priority, 0) ASC, k.priority ASC
+      LIMIT 1
+    `).get(providerId) as any;
+    if (stored) resolvedKey = decryptSecret(stored.key_value);
+  }
+  if (!resolvedKey) {
+    res.status(400).json({ error: "This provider has no stored API key — provide apiKey in the request" });
     return;
   }
 
@@ -974,9 +996,12 @@ router.post("/providers/:providerId/fetch-models", async (req: AuthRequest, res)
     const models = await fetchModelsFromProvider({
       type: provider.type,
       baseUrl: resolvedBaseUrl,
-      apiKey,
+      apiKey: resolvedKey,
     });
-    res.json(models);
+    const catalogNames = new Set(
+      (db.prepare("SELECT name FROM models").all() as any[]).map((m) => m.name),
+    );
+    res.json(models.map((m) => ({ ...m, inCatalog: catalogNames.has(m.id) })));
   } catch (err: any) {
     req.log.warn({ err }, "Failed to fetch provider models");
     res.status(400).json({ error: err.message ?? "Failed to fetch models from provider" });

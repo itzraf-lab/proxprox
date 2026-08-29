@@ -1,7 +1,7 @@
 import * as React from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
-import { useGetAdminProviders, useDeleteAdminProvider, getGetAdminProvidersQueryKey } from "@workspace/api-client-react"
+import { useGetAdminProviders, useDeleteAdminProvider, useCreateAdminModel, getGetAdminProvidersQueryKey, getGetAdminModelsQueryKey } from "@workspace/api-client-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Server, Plus, Trash2, KeyRound, Workflow, Zap, CheckSquare, Square,
-  Database, DollarSign, Link, ChevronDown, ChevronRight, AlertTriangle, Globe, Edit2
+  Database, DollarSign, Link, ChevronDown, ChevronRight, AlertTriangle, Globe, Edit2, RefreshCw
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
@@ -32,6 +32,8 @@ interface FetchedModelInfo {
   inputCostPerMtok: number | null
   outputCostPerMtok: number | null
   metaSource: "known" | "provider" | "unknown"
+  /** Present on fetch-models responses: model name already exists in the catalog */
+  inCatalog?: boolean
 }
 
 /** One API key entry within a base URL */
@@ -145,6 +147,7 @@ function AdminProvidersContent() {
                   <CardTitle className="text-lg md:text-xl font-mono uppercase tracking-wider truncate">{provider.name}</CardTitle>
                 </div>
                 <div className="flex items-center gap-2">
+                  <SyncModelsDialog provider={provider} />
                   <EditProviderDialog provider={provider} />
                   <Button
                     variant="ghost" size="icon"
@@ -1177,6 +1180,244 @@ function EditProviderDialog({ provider }: { provider: Provider }) {
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Sync Models Dialog ────────────────────────────────────────────────────────
+
+/**
+ * Re-fetch an existing provider's model list and let the admin import models
+ * that aren't in the catalog yet. Uses the provider's stored API key server-
+ * side, so no credentials need to be re-entered.
+ */
+function SyncModelsDialog({ provider }: { provider: Provider }) {
+  const [open, setOpen] = React.useState(false)
+  const [isFetching, setIsFetching] = React.useState(false)
+  const [isImporting, setIsImporting] = React.useState(false)
+  const [fetchedModels, setFetchedModels] = React.useState<FetchedModelInfo[] | null>(null)
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
+  const [fetchError, setFetchError] = React.useState<string | null>(null)
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const createModel = useCreateAdminModel()
+
+  const reset = () => {
+    setIsFetching(false)
+    setFetchedModels(null)
+    setSelectedIds(new Set())
+    setFetchError(null)
+  }
+
+  const handleFetch = async () => {
+    setIsFetching(true)
+    setFetchError(null)
+    try {
+      const res = await customFetch(`${API_BASE}/api/admin/providers/${provider.id}/fetch-models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setFetchError(data?.error ?? 'Failed to fetch models')
+        setFetchedModels(null)
+        toast({ title: "Fetch failed", variant: "destructive" })
+        return
+      }
+      setFetchedModels(data)
+      // Pre-select only models that are genuinely new to the catalog.
+      const fresh = data.filter((m: FetchedModelInfo) => !m.inCatalog)
+      setSelectedIds(new Set(fresh.map((m: FetchedModelInfo) => m.id)))
+      toast({
+        title: fresh.length > 0
+          ? `${fresh.length} new model${fresh.length !== 1 ? 's' : ''} detected`
+          : "Catalog is up to date",
+      })
+    } catch (err: any) {
+      setFetchError(err.message ?? 'Network error')
+      toast({ title: "Failed to connect", variant: "destructive" })
+    } finally {
+      setIsFetching(false)
+    }
+  }
+
+  // Auto-fetch when the dialog opens.
+  React.useEffect(() => {
+    if (open) handleFetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  const toggleModel = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const newModels = fetchedModels?.filter(m => !m.inCatalog) ?? []
+  const allNewSelected = newModels.length > 0 && newModels.every(m => selectedIds.has(m.id))
+
+  const handleImport = async () => {
+    const toImport = newModels.filter(m => selectedIds.has(m.id))
+    if (toImport.length === 0) return
+    setIsImporting(true)
+    let imported = 0
+    let failed = 0
+    try {
+      for (const m of toImport) {
+        try {
+          await createModel.mutateAsync({
+            data: {
+              name: m.id,
+              litellmModel: m.id,
+              providerId: provider.id,
+              contextWindow: m.contextWindow ?? 4096,
+              inputCostPerMtok: m.inputCostPerMtok ?? 0,
+              outputCostPerMtok: m.outputCostPerMtok ?? 0,
+              enabled: true,
+            },
+          })
+          imported++
+        } catch {
+          failed++
+        }
+      }
+      if (failed === 0) {
+        toast({ title: `Imported ${imported} model${imported !== 1 ? 's' : ''}` })
+        setOpen(false)
+        reset()
+      } else {
+        toast({
+          title: `Imported ${imported}, ${failed} failed (name conflict or LiteLLM error)`,
+          variant: "destructive",
+        })
+      }
+      queryClient.invalidateQueries({ queryKey: getGetAdminProvidersQueryKey() })
+      queryClient.invalidateQueries({ queryKey: getGetAdminModelsQueryKey() })
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost" size="icon"
+          aria-label={`Sync models for ${provider.name}`}
+          className="text-muted-foreground hover:bg-accent hover:text-primary rounded-none shrink-0"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl rounded-none border-2 max-h-[92vh] overflow-y-auto p-4 md:p-6">
+        <DialogHeader>
+          <DialogTitle className="font-mono uppercase tracking-wider text-lg">
+            Sync Models — {provider.name}
+          </DialogTitle>
+        </DialogHeader>
+
+        <p className="font-mono text-[10px] text-muted-foreground leading-relaxed">
+          Queries the provider's <code className="text-[9px]">/models</code> endpoint with its stored key and
+          diffs the result against the catalog. Models already in the catalog are locked; select new ones to import.
+        </p>
+
+        {isFetching ? (
+          <div className="flex items-center justify-center border-2 border-dashed p-8 text-muted-foreground font-mono text-xs">
+            Querying provider...
+          </div>
+        ) : fetchError ? (
+          <div className="space-y-3">
+            <div className="p-2 bg-destructive/10 border border-destructive/30 text-destructive font-mono text-xs break-all">
+              {fetchError}
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={handleFetch}
+              className="rounded-none font-mono uppercase text-[10px] h-7">
+              <RefreshCw className="w-3 h-3 mr-1" /> Retry
+            </Button>
+          </div>
+        ) : fetchedModels == null ? null : fetchedModels.length === 0 ? (
+          <div className="flex items-center justify-center border-2 border-dashed p-8 text-muted-foreground font-mono text-xs">
+            Provider returned no models
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[10px] text-muted-foreground uppercase">
+                {selectedIds.size}/{newModels.length} new selected · {fetchedModels.length - newModels.length} already in catalog
+              </span>
+              {newModels.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button type="button"
+                    onClick={() => setSelectedIds(new Set(newModels.map(m => m.id)))}
+                    disabled={allNewSelected}
+                    className="font-mono text-[10px] uppercase text-muted-foreground hover:text-primary disabled:opacity-40 flex items-center gap-1">
+                    <CheckSquare className="w-3 h-3" /> All
+                  </button>
+                  <span className="text-muted-foreground/40 text-[10px]">|</span>
+                  <button type="button" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}
+                    className="font-mono text-[10px] uppercase text-muted-foreground hover:text-primary disabled:opacity-40 flex items-center gap-1">
+                    <Square className="w-3 h-3" /> None
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1 max-h-[320px] overflow-y-auto">
+              {fetchedModels.map(m => (
+                <label
+                  key={m.id}
+                  className={`flex items-center gap-2 p-2 border transition-colors
+                    ${m.inCatalog
+                      ? 'opacity-50 cursor-not-allowed bg-sidebar/10'
+                      : `cursor-pointer hover:bg-sidebar/20 ${selectedIds.has(m.id) ? 'bg-primary/5 border-primary/30' : 'bg-background'}`}`}
+                >
+                  <Checkbox
+                    checked={!m.inCatalog && selectedIds.has(m.id)}
+                    onCheckedChange={() => { if (!m.inCatalog) toggleModel(m.id) }}
+                    disabled={m.inCatalog}
+                    className="rounded-none shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-xs font-medium truncate">{m.name}</div>
+                    {m.inCatalog ? (
+                      <div className="font-mono text-[9px] text-muted-foreground uppercase">already in catalog</div>
+                    ) : m.metaSource === 'known' ? (
+                      <div className="font-mono text-[9px] text-emerald-600 dark:text-emerald-400 uppercase">verified</div>
+                    ) : (
+                      <div className="font-mono text-[9px] text-primary uppercase">new</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-right shrink-0">
+                    <span className="font-mono text-[10px] text-muted-foreground w-10 text-right">{fmtCtx(m.contextWindow)}</span>
+                    <span className="font-mono text-[10px] w-20 text-right hidden sm:block">
+                      {m.inputCostPerMtok != null
+                        ? `${fmtPrice(m.inputCostPerMtok)}/${fmtPrice(m.outputCostPerMtok)}`
+                        : <span className="text-muted-foreground">—</span>}
+                    </span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+
+        <DialogFooter className="border-t pt-4 flex-col sm:flex-row gap-2">
+          <Button type="button" variant="outline" onClick={() => setOpen(false)} className="rounded-none font-mono uppercase w-full sm:w-auto">
+            Close
+          </Button>
+          <Button
+            type="button"
+            onClick={handleImport}
+            disabled={isFetching || isImporting || selectedIds.size === 0}
+            className="rounded-none font-mono uppercase w-full sm:w-auto"
+          >
+            {isImporting ? "Importing..." : `Import${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
