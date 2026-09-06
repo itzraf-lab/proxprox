@@ -2,11 +2,12 @@ import * as React from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit, History, ScrollText, Zap } from "lucide-react"
+import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit, History, ScrollText, Zap, Coins } from "lucide-react"
 import { Button } from "./ui/button"
 import { Link } from "wouter"
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet"
 import { clearToken } from "@/lib/api"
+import { QillinLogo } from "./qillin-logo"
 
 function NavLinks({ location, isAdmin, onNavigate }: { location: string; isAdmin: boolean; onNavigate?: () => void }) {
   const cls = (path: string) =>
@@ -26,6 +27,9 @@ function NavLinks({ location, isAdmin, onNavigate }: { location: string; isAdmin
       </Link>
       <Link href="/requests" className={cls("/requests")} onClick={onNavigate}>
         <History className="h-4 w-4 shrink-0" /> Request Log
+      </Link>
+      <Link href="/pricing" className={cls("/pricing")} onClick={onNavigate}>
+        <Coins className="h-4 w-4 shrink-0" /> Pricing
       </Link>
 
       {isAdmin && (
@@ -71,6 +75,9 @@ function GuestLinks({ location, onNavigate }: { location: string; onNavigate?: (
       <Link href="/models" className={cls("/models")} onClick={onNavigate}>
         <BookOpen className="h-4 w-4 shrink-0" /> Model Catalog
       </Link>
+      <Link href="/pricing" className={cls("/pricing")} onClick={onNavigate}>
+        <Coins className="h-4 w-4 shrink-0" /> Pricing
+      </Link>
     </>
   )
 }
@@ -111,11 +118,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const Logo = () => (
     <Link href="/" className="flex items-center gap-2 font-bold text-xl tracking-tight text-sidebar-foreground">
-      <div className="w-6 h-6 bg-primary rounded-sm flex items-center justify-center shrink-0">
-        <div className="w-3 h-3 border-2 border-primary-foreground rounded-full" />
-      </div>
+      <QillinLogo className="w-7 h-7 shrink-0 rounded-md" />
       Qillin
     </Link>
+  )
+
+  const LegalLinks = ({ onNavigate }: { onNavigate?: () => void }) => (
+    <div className="flex items-center gap-3 px-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+      <Link href="/legal" className="hover:text-foreground transition-colors" onClick={onNavigate}>
+        Privacy &amp; Terms
+      </Link>
+      <span aria-hidden="true">·</span>
+      <Link href="/pricing" className="hover:text-foreground transition-colors" onClick={onNavigate}>
+        Pricing
+      </Link>
+    </div>
   )
 
   const UserFooter = () =>
@@ -173,7 +190,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <GuestLinks location={location} onNavigate={() => setMobileOpen(false)} />
               )}
             </nav>
-            <div className="p-4 border-t border-sidebar-border">
+            <div className="p-4 border-t border-sidebar-border space-y-3">
+              <LegalLinks onNavigate={() => setMobileOpen(false)} />
               <UserFooter />
             </div>
           </SheetContent>
@@ -201,7 +219,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
             )}
           </nav>
 
-          <div className="p-4 border-t border-sidebar-border mt-auto">
+          <div className="p-4 border-t border-sidebar-border mt-auto space-y-3">
+            <LegalLinks />
             <UserFooter />
           </div>
         </aside>

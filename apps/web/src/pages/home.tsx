@@ -165,9 +165,13 @@ export default function Home() {
               <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
                 © {new Date().getFullYear()} Qillin — AI Proxy Platform
               </p>
-              <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-widest">
-                Zero message logging · EU data protection · Audited controls
-              </p>
+              <div className="flex items-center gap-4 font-mono text-[10px] text-muted-foreground uppercase tracking-widest">
+                <Link href="/pricing" className="hover:text-foreground transition-colors">Pricing</Link>
+                <span aria-hidden="true">·</span>
+                <Link href="/legal" className="hover:text-foreground transition-colors">Privacy &amp; Terms</Link>
+                <span aria-hidden="true">·</span>
+                <span>Zero message logging</span>
+              </div>
             </div>
           </div>
         </footer>
