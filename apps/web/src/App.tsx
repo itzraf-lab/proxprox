@@ -16,6 +16,7 @@ import AdminCachePricing from '@/pages/admin/cache-pricing';
 import Requests from '@/pages/requests';
 import AdminRequests from '@/pages/admin/requests';
 import Pricing from '@/pages/pricing';
+import TopUp from '@/pages/top-up';
 import Legal from '@/pages/legal';
 
 const queryClient = new QueryClient({
@@ -53,6 +54,7 @@ function Router() {
       <Route path="/models" component={Models} />
       <Route path="/requests" component={Requests} />
       <Route path="/pricing" component={Pricing} />
+      <Route path="/top-up" component={TopUp} />
       <Route path="/legal" component={Legal} />
 
       <Route path="/admin" component={AdminDashboard} />

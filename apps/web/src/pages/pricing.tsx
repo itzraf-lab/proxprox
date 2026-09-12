@@ -2,7 +2,7 @@ import * as React from "react"
 import { Shell } from "@/components/layout"
 import { Button } from "@/components/ui/button"
 import { Link } from "wouter"
-import { Coins, ArrowRightLeft, Zap, ShieldCheck } from "lucide-react"
+import { Coins, ArrowRightLeft, Zap, ShieldCheck, Wallet } from "lucide-react"
 
 const TOP_UPS = [
   { usd: 5, qredits: 10 },
@@ -88,6 +88,29 @@ export default function Pricing() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Indonesian pricing */}
+        <div className="border-t bg-background">
+          <div className="mx-auto max-w-7xl px-6 py-16 lg:px-8">
+            <div className="mx-auto max-w-3xl border bg-card p-8 sm:p-10">
+              <div className="flex items-center justify-center gap-3 font-mono text-sm font-semibold uppercase tracking-wider text-primary">
+                <Wallet className="h-5 w-5" /> For Indonesians
+              </div>
+              <p className="mt-6 text-center text-3xl sm:text-4xl font-bold tracking-tight text-foreground">
+                $1 top up = <span className="text-primary">2 Qr</span> = Rp. 16.000
+              </p>
+              <p className="mt-4 text-center text-sm sm:text-base text-muted-foreground leading-7">
+                Top up in Rupiah at a flat, fixed rate — a $1 top-up (credited as 2 Qredits) costs
+                only Rp. 16.000. No conversion surprises, no hidden fees.
+              </p>
+              <div className="mt-8 text-center">
+                <Button asChild size="lg" className="rounded-none font-mono uppercase tracking-wider">
+                  <Link href="/top-up">Top Up</Link>
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
 

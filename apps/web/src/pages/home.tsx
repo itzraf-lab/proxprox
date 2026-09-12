@@ -2,7 +2,7 @@ import * as React from "react"
 import { Shell } from "@/components/layout"
 import { Button } from "@/components/ui/button"
 import { Link } from "wouter"
-import { Activity, EyeOff, KeyRound, Route, ShieldCheck, Terminal } from "lucide-react"
+import { Activity, EyeOff, KeyRound, Mail, MessageCircle, Route, ShieldCheck, Terminal } from "lucide-react"
 import { ComplianceBadges } from "@/components/compliance-badges"
 import { getOpenAiBaseUrl } from "@/lib/url"
 
@@ -150,6 +150,42 @@ export default function Home() {
               </dd>
             </div>
           </dl>
+        </div>
+
+        {/* Contact / support */}
+        <div className="border-t bg-background">
+          <div className="mx-auto max-w-7xl px-6 py-16 lg:px-8">
+            <div className="mx-auto max-w-2xl text-center">
+              <h2 className="text-3xl font-bold tracking-tight text-foreground uppercase sm:text-4xl">
+                Questions &amp; Issues
+              </h2>
+              <p className="mt-4 text-base leading-7 text-muted-foreground">
+                Something not working, or just want to ask about plans, models, or billing? Reach
+                out directly — a human will answer.
+              </p>
+            </div>
+            <div className="mx-auto mt-10 grid max-w-3xl grid-cols-1 gap-6 sm:grid-cols-2">
+              <div className="flex items-start gap-3 border bg-card p-6">
+                <MessageCircle className="h-5 w-5 flex-none text-primary mt-0.5" aria-hidden="true" />
+                <div>
+                  <p className="font-mono text-sm font-semibold uppercase text-foreground">Discord</p>
+                  <p className="mt-1 font-mono text-sm text-muted-foreground">iraa.dakilla</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 border bg-card p-6">
+                <Mail className="h-5 w-5 flex-none text-primary mt-0.5" aria-hidden="true" />
+                <div>
+                  <p className="font-mono text-sm font-semibold uppercase text-foreground">Email</p>
+                  <a
+                    href="mailto:eruudev4@gmail.com"
+                    className="mt-1 block font-mono text-sm text-muted-foreground underline hover:text-foreground"
+                  >
+                    eruudev4@gmail.com
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Compliance footer */}
