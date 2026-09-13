@@ -106,7 +106,7 @@ function AdminProvidersContent() {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-sidebar/10">
-      <div className="flex items-start sm:items-center justify-between gap-4">
+      <div className="flex items-start sm:items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold uppercase tracking-tight font-mono text-primary flex items-center gap-3">
             <Server className="h-6 w-6 md:h-8 md:w-8" />
@@ -131,8 +131,8 @@ function AdminProvidersContent() {
         <div className="grid gap-4 md:gap-6">
           {providers?.map(provider => (
             <Card key={provider.id} className="rounded-none border-2 shadow-lg overflow-hidden group">
-              <CardHeader className="bg-background border-b pb-4 px-4 md:px-6 flex flex-row items-start justify-between space-y-0">
-                <div className="min-w-0 flex-1">
+              <CardHeader className="bg-background border-b pb-4 px-4 md:px-6 flex flex-row flex-wrap items-start justify-between gap-2 space-y-0">
+                <div className="min-w-0 flex-1 basis-48">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <Badge variant={provider.isActive ? "success" : "secondary"} className="rounded-none font-mono text-[10px] uppercase">
                       {provider.isActive ? 'Active' : 'Offline'}
@@ -144,16 +144,16 @@ function AdminProvidersContent() {
                       {provider.baseUrls.length} endpoint{provider.baseUrls.length !== 1 ? 's' : ''}
                     </Badge>
                   </div>
-                  <CardTitle className="text-lg md:text-xl font-mono uppercase tracking-wider truncate">{provider.name}</CardTitle>
+                  <CardTitle className="text-lg md:text-xl font-mono uppercase tracking-wider break-all">{provider.name}</CardTitle>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 sm:gap-2 ml-auto">
                   <SyncModelsDialog provider={provider} />
                   <EditProviderDialog provider={provider} />
                   <Button
                     variant="ghost" size="icon"
                     aria-label={`Delete provider ${provider.name}`}
                     onClick={() => setProviderToDelete(provider)}
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive rounded-none shrink-0 ml-2"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive rounded-none shrink-0"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -714,7 +714,7 @@ function AddProviderDialog() {
                 </div>
               ) : (
                 <>
-                  <div className="mb-2 flex items-center justify-between">
+                  <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
                     <span className="font-mono text-[10px] text-muted-foreground uppercase">{selectedIds.size}/{fetchedModels.length} selected</span>
                     <div className="flex gap-2 font-mono text-[10px] text-muted-foreground uppercase">
                       <span className="flex items-center gap-1"><Database className="w-2.5 h-2.5" />Ctx</span>
@@ -725,27 +725,33 @@ function AddProviderDialog() {
                     {fetchedModels.map(m => (
                       <label
                         key={m.id}
-                        className={`flex items-center gap-2 p-2 border cursor-pointer transition-colors hover:bg-sidebar/20
+                        className={`flex items-start gap-2 p-2 border cursor-pointer transition-colors hover:bg-sidebar/20
                           ${selectedIds.has(m.id) ? 'bg-primary/5 border-primary/30' : 'bg-background'}`}
                       >
                         <Checkbox
                           checked={selectedIds.has(m.id)}
                           onCheckedChange={() => toggleModel(m.id)}
-                          className="rounded-none shrink-0"
+                          className="rounded-none shrink-0 mt-0.5"
                         />
+                        {/* Name wraps in full instead of truncating so long model
+                            IDs stay readable on narrow screens. */}
                         <div className="flex-1 min-w-0">
-                          <div className="font-mono text-xs font-medium truncate">{m.name}</div>
-                          {m.metaSource === 'known' && (
-                            <div className="font-mono text-[9px] text-emerald-600 dark:text-emerald-400 uppercase">verified</div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-right shrink-0">
-                          <span className="font-mono text-[10px] text-muted-foreground w-10 text-right">{fmtCtx(m.contextWindow)}</span>
-                          <span className="font-mono text-[10px] w-20 text-right hidden sm:block">
-                            {m.inputCostPerMtok != null
-                              ? `${fmtPrice(m.inputCostPerMtok)}/${fmtPrice(m.outputCostPerMtok)}`
-                              : <span className="text-muted-foreground">—</span>}
-                          </span>
+                          <div className="font-mono text-xs font-medium break-all">{m.name}</div>
+                          <div className="flex items-center justify-between gap-2 flex-wrap mt-0.5">
+                            <span className="font-mono text-[9px] uppercase">
+                              {m.metaSource === 'known' && (
+                                <span className="text-emerald-600 dark:text-emerald-400">verified</span>
+                              )}
+                            </span>
+                            <span className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground ml-auto">
+                              <span>{fmtCtx(m.contextWindow)}</span>
+                              <span>
+                                {m.inputCostPerMtok != null
+                                  ? `${fmtPrice(m.inputCostPerMtok)}/${fmtPrice(m.outputCostPerMtok)}`
+                                  : "—"}
+                              </span>
+                            </span>
+                          </div>
                         </div>
                       </label>
                     ))}
@@ -1370,7 +1376,7 @@ function SyncModelsDialog({ provider }: { provider: Provider }) {
               {fetchedModels.map(m => (
                 <label
                   key={m.id}
-                  className={`flex items-center gap-2 p-2 border transition-colors
+                  className={`flex items-start gap-2 p-2 border transition-colors
                     ${m.inCatalog
                       ? 'opacity-50 cursor-not-allowed bg-sidebar/10'
                       : `cursor-pointer hover:bg-sidebar/20 ${selectedIds.has(m.id) ? 'bg-primary/5 border-primary/30' : 'bg-background'}`}`}
@@ -1379,25 +1385,31 @@ function SyncModelsDialog({ provider }: { provider: Provider }) {
                     checked={!m.inCatalog && selectedIds.has(m.id)}
                     onCheckedChange={() => { if (!m.inCatalog) toggleModel(m.id) }}
                     disabled={m.inCatalog}
-                    className="rounded-none shrink-0"
+                    className="rounded-none shrink-0 mt-0.5"
                   />
+                  {/* Name wraps in full instead of truncating so long model
+                      IDs stay readable on narrow screens. */}
                   <div className="flex-1 min-w-0">
-                    <div className="font-mono text-xs font-medium truncate">{m.name}</div>
-                    {m.inCatalog ? (
-                      <div className="font-mono text-[9px] text-muted-foreground uppercase">already in catalog</div>
-                    ) : m.metaSource === 'known' ? (
-                      <div className="font-mono text-[9px] text-emerald-600 dark:text-emerald-400 uppercase">verified</div>
-                    ) : (
-                      <div className="font-mono text-[9px] text-primary uppercase">new</div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 text-right shrink-0">
-                    <span className="font-mono text-[10px] text-muted-foreground w-10 text-right">{fmtCtx(m.contextWindow)}</span>
-                    <span className="font-mono text-[10px] w-20 text-right hidden sm:block">
-                      {m.inputCostPerMtok != null
-                        ? `${fmtPrice(m.inputCostPerMtok)}/${fmtPrice(m.outputCostPerMtok)}`
-                        : <span className="text-muted-foreground">—</span>}
-                    </span>
+                    <div className="font-mono text-xs font-medium break-all">{m.name}</div>
+                    <div className="flex items-center justify-between gap-2 flex-wrap mt-0.5">
+                      <span className="font-mono text-[9px] uppercase">
+                        {m.inCatalog ? (
+                          <span className="text-muted-foreground">already in catalog</span>
+                        ) : m.metaSource === 'known' ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">verified</span>
+                        ) : (
+                          <span className="text-primary">new</span>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground ml-auto">
+                        <span>{fmtCtx(m.contextWindow)}</span>
+                        <span>
+                          {m.inputCostPerMtok != null
+                            ? `${fmtPrice(m.inputCostPerMtok)}/${fmtPrice(m.outputCostPerMtok)}`
+                            : "—"}
+                        </span>
+                      </span>
+                    </div>
                   </div>
                 </label>
               ))}

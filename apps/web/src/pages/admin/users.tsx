@@ -510,9 +510,9 @@ function EditUserForm({ user, onClose }: { user: AdminUser; onClose: () => void 
                                     className="h-4 w-4 border-2 rounded-none shrink-0"
                                   />
                                   <div className="min-w-0 flex-1">
-                                    <div className="font-mono text-xs truncate">{model.name}</div>
+                                    <div className="font-mono text-xs break-all">{model.name}</div>
                                     {model.litellmModel !== model.name && (
-                                      <div className="font-mono text-[10px] text-muted-foreground truncate">{model.litellmModel}</div>
+                                      <div className="font-mono text-[10px] text-muted-foreground break-all">{model.litellmModel}</div>
                                     )}
                                   </div>
                                   {(model.inputCostPerMtok > 0 || model.outputCostPerMtok > 0) && (

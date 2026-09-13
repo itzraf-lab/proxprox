@@ -91,9 +91,9 @@ function RequestsContent() {
           <div>
             <CardTitle className="font-mono uppercase tracking-wider text-sm">Event Stream</CardTitle>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Select value={model} onValueChange={(val) => { setModel(val); setPage(1); }}>
-              <SelectTrigger className="w-[180px] rounded-none font-mono text-xs border-2 bg-background">
+              <SelectTrigger className="w-full sm:w-[180px] rounded-none font-mono text-xs border-2 bg-background">
                 <SelectValue placeholder="Filter by model" />
               </SelectTrigger>
               <SelectContent className="rounded-none border-2 font-mono text-xs">

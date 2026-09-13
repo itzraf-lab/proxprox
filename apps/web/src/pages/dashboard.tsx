@@ -97,9 +97,9 @@ response = client.chat.completions.create(
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-8">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-8">
       <div>
-        <h1 className="text-3xl font-bold uppercase tracking-tight font-mono">Overview</h1>
+        <h1 className="text-2xl md:text-3xl font-bold uppercase tracking-tight font-mono">Overview</h1>
         <p className="text-muted-foreground font-mono text-sm mt-1">System status and resource utilization</p>
       </div>
 

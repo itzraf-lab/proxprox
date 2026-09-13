@@ -142,7 +142,7 @@ export function ModelCombobox({ value, onChange, configuredModels = [], placehol
                         <Check className={`h-3.5 w-3.5 shrink-0 ${value === m.litellmModel ? "text-primary" : "opacity-0"}`} />
                         <div className="flex-1 min-w-0">
                           <div className="font-mono text-sm font-medium">{m.name}</div>
-                          <div className="font-mono text-[10px] text-muted-foreground truncate">{m.litellmModel}</div>
+                          <div className="font-mono text-[10px] text-muted-foreground break-all">{m.litellmModel}</div>
                         </div>
                         <div className="text-right shrink-0">
                           <div className="font-mono text-[10px] text-primary/70">{m.provider}</div>
@@ -171,7 +171,7 @@ export function ModelCombobox({ value, onChange, configuredModels = [], placehol
                         <Check className={`h-3.5 w-3.5 shrink-0 ${value === m.litellmModel ? "text-primary" : "opacity-0"}`} />
                         <div className="flex-1 min-w-0">
                           <div className="font-mono text-sm font-medium">{m.displayName}</div>
-                          <div className="font-mono text-[10px] text-muted-foreground truncate">{m.litellmModel}</div>
+                          <div className="font-mono text-[10px] text-muted-foreground break-all">{m.litellmModel}</div>
                         </div>
                         <div className="text-right shrink-0 space-y-0.5">
                           <div className="font-mono text-[10px] text-muted-foreground">{fmtCtx(m.contextWindow)} ctx</div>

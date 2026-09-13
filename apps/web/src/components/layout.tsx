@@ -2,7 +2,7 @@ import * as React from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, X, BrainCircuit, History, ScrollText, Zap, Coins } from "lucide-react"
+import { LayoutDashboard, Database, Users, Server, BookOpen, LogOut, Loader2, Home, Menu, BrainCircuit, History, ScrollText, Zap, Coins } from "lucide-react"
 import { Button } from "./ui/button"
 import { Link } from "wouter"
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet"
@@ -177,11 +177,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-72 p-0 bg-sidebar border-r flex flex-col">
-            <div className="flex items-center justify-between p-5 border-b border-sidebar-border">
+            {/* No custom close button here — SheetContent already renders one
+                (top-right), and a second X appeared next to it on mobile. */}
+            <div className="flex items-center p-5 border-b border-sidebar-border">
               <Logo />
-              <Button variant="ghost" size="icon" aria-label="Close navigation menu" className="text-sidebar-foreground" onClick={() => setMobileOpen(false)}>
-                <X className="h-4 w-4" />
-              </Button>
             </div>
             <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
               {user ? (

@@ -22,11 +22,11 @@ export default function Models() {
   return (
     <Shell>
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        <div className="border-b bg-background p-6">
+        <div className="border-b bg-background p-4 sm:p-6">
           <div className="max-w-6xl mx-auto flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold uppercase tracking-tight font-mono flex items-center gap-3">
-                <BrainCircuit className="h-8 w-8 text-primary" />
+              <h1 className="text-2xl sm:text-3xl font-bold uppercase tracking-tight font-mono flex items-center gap-3">
+                <BrainCircuit className="h-6 w-6 sm:h-8 sm:w-8 text-primary" />
                 Model Catalog
               </h1>
               <p className="text-muted-foreground font-mono text-sm mt-1">Available routing targets and cost parameters</p>
@@ -43,7 +43,7 @@ export default function Models() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 bg-sidebar/20">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-sidebar/20">
           <div className="max-w-6xl mx-auto">
             {isLoading ? (
               <div className="text-center font-mono text-muted-foreground py-12">Loading catalog...</div>
@@ -68,7 +68,7 @@ export default function Models() {
                           <Badge variant={model.enabled ? "success" : "secondary"} className="rounded-none font-mono text-[10px] mb-2 uppercase tracking-widest px-1.5 py-0">
                             {model.enabled ? "Online" : "Offline"}
                           </Badge>
-                          <CardTitle className="font-mono text-lg truncate leading-tight group-hover:text-primary transition-colors" title={model.name}>
+                          <CardTitle className="font-mono text-base sm:text-lg break-all leading-tight group-hover:text-primary transition-colors" title={model.name}>
                             {model.name}
                           </CardTitle>
                         </div>
