@@ -1,6 +1,17 @@
 import * as React from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { Shell } from "@/components/layout"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,6 +23,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Link } from "wouter"
 import {
   ArrowLeft,
+  Ban,
   CheckCircle2,
   Clock,
   Loader2,
@@ -32,7 +44,8 @@ interface Topup {
   id: string
   amountIdr: number
   qredits: number
-  status: "pending" | "paid" | "expired" | "failed"
+  // "expired" only appears on rows written before expiry was reported as "failed".
+  status: "pending" | "paid" | "expired" | "failed" | "cancelled"
   qrImageUrl: string | null
   createdAt: string
   expiresAt: string | null
@@ -137,7 +150,7 @@ function TopUpContent() {
         </p>
 
         {active ? (
-          <PaymentPanel topup={active} onDone={handleDone} onExpired={loadHistory} />
+          <PaymentPanel topup={active} onDone={handleDone} onSettled={loadHistory} />
         ) : (
           <div className="mt-10 border bg-card p-6 sm:p-8">
             <div className="flex items-center gap-3 font-mono text-sm font-semibold uppercase tracking-wider text-primary">
@@ -256,9 +269,17 @@ function TopupStatusBadge({ status }: { status: Topup["status"] }) {
       </span>
     )
   }
+  if (status === "cancelled") {
+    return (
+      <span className="inline-flex items-center gap-1 font-mono text-xs uppercase tracking-widest text-muted-foreground">
+        <Ban className="h-3.5 w-3.5" /> Cancelled
+      </span>
+    )
+  }
+  // "failed", plus legacy "expired" rows from before the rename.
   return (
-    <span className="inline-flex items-center gap-1 font-mono text-xs uppercase tracking-widest text-muted-foreground">
-      <XCircle className="h-3.5 w-3.5" /> {status}
+    <span className="inline-flex items-center gap-1 font-mono text-xs uppercase tracking-widest text-destructive">
+      <XCircle className="h-3.5 w-3.5" /> Failed
     </span>
   )
 }
@@ -268,11 +289,11 @@ const POLL_INTERVAL_MS = 8_000
 function PaymentPanel({
   topup,
   onDone,
-  onExpired,
+  onSettled,
 }: {
   topup: Topup
   onDone: () => void
-  onExpired: () => void
+  onSettled: () => void
 }) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -280,6 +301,7 @@ function PaymentPanel({
   const [current, setCurrent] = React.useState(topup)
   const [qrObjectUrl, setQrObjectUrl] = React.useState<string | null>(null)
   const [checking, setChecking] = React.useState(false)
+  const [cancelling, setCancelling] = React.useState(false)
   const [secondsLeft, setSecondsLeft] = React.useState(() =>
     Math.max(0, Math.floor((Date.parse(topup.expiresAt ?? "") - Date.now()) / 1000)),
   )
@@ -350,10 +372,37 @@ function PaymentPanel({
     return () => clearInterval(timer)
   }, [current.status, checkStatus])
 
-  // Tell the parent when the QR lapses so the history list stays accurate.
+  const handleCancel = async () => {
+    setCancelling(true)
+    try {
+      const res = await customFetch(`${API_BASE}/api/topup/${topup.id}/cancel`, { method: "POST" })
+      const body: Topup | null = await res.json().catch(() => null)
+      if (res.ok && body) {
+        setCurrent(body)
+      } else if (res.status === 409 && body) {
+        // It was already paid or the window had just closed — adopt the truth.
+        setCurrent(body)
+        if (body.status === "paid") {
+          queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() })
+        }
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Couldn't cancel the payment",
+          description: (body as any)?.error ?? `HTTP ${res.status}`,
+        })
+      }
+    } catch {
+      toast({ variant: "destructive", title: "Network error", description: "Please try again." })
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  // Tell the parent once the top-up settles so the history list stays accurate.
   React.useEffect(() => {
-    if (current.status === "expired") onExpired()
-  }, [current.status, onExpired])
+    if (current.status !== "pending") onSettled()
+  }, [current.status, onSettled])
 
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, "0")
   const ss = String(secondsLeft % 60).padStart(2, "0")
@@ -387,16 +436,38 @@ function PaymentPanel({
     )
   }
 
-  if (current.status === "expired") {
+  if (current.status === "failed" || current.status === "expired") {
     return (
       <div className="mt-10 border bg-card p-8 text-center sm:p-10">
         <XCircle className="mx-auto h-14 w-14 text-destructive" aria-hidden="true" />
         <h2 className="mt-6 text-2xl font-bold uppercase tracking-widest text-foreground sm:text-3xl">
-          QRIS expired
+          Payment failed
         </h2>
         <p className="mt-4 text-base text-muted-foreground">
           The 5-minute window closed before payment arrived. Nothing was charged — generate a new
           code when you're ready.
+        </p>
+        <Button
+          size="lg"
+          onClick={onDone}
+          className="mt-8 rounded-none font-mono uppercase tracking-wider"
+        >
+          Create New QRIS
+        </Button>
+      </div>
+    )
+  }
+
+  if (current.status === "cancelled") {
+    return (
+      <div className="mt-10 border bg-card p-8 text-center sm:p-10">
+        <Ban className="mx-auto h-14 w-14 text-muted-foreground" aria-hidden="true" />
+        <h2 className="mt-6 text-2xl font-bold uppercase tracking-widest text-foreground sm:text-3xl">
+          Payment cancelled
+        </h2>
+        <p className="mt-4 text-base text-muted-foreground">
+          This QRIS code is no longer being watched. Nothing was charged — generate a new code
+          when you're ready.
         </p>
         <Button
           size="lg"
@@ -465,6 +536,36 @@ function PaymentPanel({
           )}
           I've paid — check now
         </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={cancelling}
+              className="rounded-none font-mono uppercase tracking-wider text-muted-foreground hover:text-destructive"
+            >
+              {cancelling ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Ban className="mr-2 h-4 w-4" />
+              )}
+              Cancel payment
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Cancel this payment?</AlertDialogTitle>
+              <AlertDialogDescription>
+                The QRIS code for {formatIdr(current.amountIdr)} will stop being watched and the
+                top-up will be marked as cancelled. Nothing is charged.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep waiting</AlertDialogCancel>
+              <AlertDialogAction onClick={handleCancel}>Cancel payment</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   )

@@ -25,7 +25,8 @@ interface TopupRow {
   qris_id: string | null;
   trx_id: string | null;
   qris_code: string | null;
-  status: "pending" | "paid" | "expired" | "failed";
+  // "expired" only exists on rows written before expiry was reported as "failed".
+  status: "pending" | "paid" | "expired" | "failed" | "cancelled";
   payer_issuer: string | null;
   gateway_tx_id: string | null;
   created_at: string;
@@ -47,6 +48,24 @@ function formatTopup(t: TopupRow) {
   };
 }
 
+/**
+ * Marks this user's pending top-ups whose payment window has closed as
+ * "failed". Called before reads and the pending-count check so stale rows
+ * never linger as "pending" or block new top-ups.
+ */
+function sweepExpired(userId: string) {
+  const pending = db
+    .prepare("SELECT id, expires_at FROM topups WHERE user_id = ? AND status = 'pending'")
+    .all(userId) as { id: string; expires_at: string | null }[];
+  const now = Date.now();
+  const markFailed = db.prepare(
+    "UPDATE topups SET status = 'failed' WHERE id = ? AND status = 'pending'",
+  );
+  for (const row of pending) {
+    if (row.expires_at && now > Date.parse(row.expires_at)) markFailed.run(row.id);
+  }
+}
+
 // POST /api/topup — create a QRIS payment for the given amount in Rupiah.
 router.post("/", async (req: AuthRequest, res) => {
   if (!isGopayConfigured()) {
@@ -63,6 +82,8 @@ router.post("/", async (req: AuthRequest, res) => {
   }
 
   const userId = req.user!.id;
+
+  sweepExpired(userId);
 
   const pending = db
     .prepare("SELECT COUNT(*) as c FROM topups WHERE user_id = ? AND status = 'pending'")
@@ -98,6 +119,7 @@ router.post("/", async (req: AuthRequest, res) => {
 
 // GET /api/topup — the current user's top-up history, newest first.
 router.get("/", (req: AuthRequest, res) => {
+  sweepExpired(req.user!.id);
   const rows = db
     .prepare("SELECT * FROM topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 50")
     .all(req.user!.id) as TopupRow[];
@@ -117,8 +139,8 @@ router.get("/:id", async (req: AuthRequest, res) => {
   }
 
   if (topup.status === "pending" && topup.expires_at && Date.now() > Date.parse(topup.expires_at)) {
-    db.prepare("UPDATE topups SET status = 'expired' WHERE id = ? AND status = 'pending'").run(topup.id);
-    topup.status = "expired";
+    db.prepare("UPDATE topups SET status = 'failed' WHERE id = ? AND status = 'pending'").run(topup.id);
+    topup.status = "failed";
   }
 
   if (topup.status === "pending") {
@@ -152,6 +174,37 @@ router.get("/:id", async (req: AuthRequest, res) => {
   }
 
   res.json(formatTopup(topup));
+});
+
+// POST /api/topup/:id/cancel — cancels a pending top-up. The QRIS code itself
+// lapses gateway-side on its own; this just stops the polling and records the
+// outcome. The guarded UPDATE means a payment that landed first always wins.
+router.post("/:id/cancel", (req: AuthRequest, res) => {
+  const topup = db
+    .prepare("SELECT * FROM topups WHERE id = ? AND user_id = ?")
+    .get(req.params.id, req.user!.id) as TopupRow | undefined;
+
+  if (!topup) {
+    res.status(404).json({ error: "Top-up not found" });
+    return;
+  }
+
+  if (topup.status !== "pending") {
+    res.status(409).json(formatTopup(topup));
+    return;
+  }
+
+  // Expired windows report as "failed", not "cancelled".
+  if (topup.expires_at && Date.now() > Date.parse(topup.expires_at)) {
+    db.prepare("UPDATE topups SET status = 'failed' WHERE id = ? AND status = 'pending'").run(topup.id);
+    const fresh = db.prepare("SELECT * FROM topups WHERE id = ?").get(topup.id) as TopupRow;
+    res.status(409).json(formatTopup(fresh));
+    return;
+  }
+
+  db.prepare("UPDATE topups SET status = 'cancelled' WHERE id = ? AND status = 'pending'").run(topup.id);
+  const fresh = db.prepare("SELECT * FROM topups WHERE id = ?").get(topup.id) as TopupRow;
+  res.json(formatTopup(fresh));
 });
 
 // GET /api/topup/:id/qr.png — proxies the QRIS image from the gateway so the
