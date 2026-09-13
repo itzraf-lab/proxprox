@@ -17,7 +17,7 @@ export default function Home() {
             <div className="max-w-2xl lg:max-w-xl lg:flex-1 lg:min-w-0">
               <div className="mt-16 sm:mt-24 lg:mt-16">
                 <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-1 rounded-full text-xs font-semibold">
-                  <span className="text-primary font-mono bg-primary/10 px-2 py-0.5 rounded-full">v0.1.0-beta</span>
+                  <span className="text-primary font-mono bg-primary/10 px-2 py-0.5 rounded-full">v1.0.0-main</span>
                   <span className="text-muted-foreground flex items-center">
                     Zero message logging
                   </span>
