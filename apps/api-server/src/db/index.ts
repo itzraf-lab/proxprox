@@ -115,6 +115,24 @@ db.exec(`
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS topups (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amount_idr INTEGER NOT NULL,
+    qredits REAL NOT NULL,
+    qris_id TEXT,
+    trx_id TEXT,
+    qris_code TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    payer_issuer TEXT,
+    gateway_tx_id TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    paid_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_topups_user ON topups(user_id);
 `);
 
 // Migrate: add latency_ms to activity_log for existing databases.
